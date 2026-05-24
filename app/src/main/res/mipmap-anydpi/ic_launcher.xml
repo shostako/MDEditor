@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive icon。
+  <monochrome> は Android 13+ Themed Icons 用だが、端末によってはアイコンを
+  縮小して外側に背景円を描画するため「太い枠線」のように見える副作用がある。
+  本アプリでは色付きアイコンを優先するため <monochrome> は外す
+  (Themed Icons がオンの端末でもデフォルトの adaptive icon が使われる)。
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>

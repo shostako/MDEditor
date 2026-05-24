@@ -1,0 +1,23 @@
+# local.properties のテンプレ。
+# 実ファイル `local.properties` は .gitignore 済なのでこれを参考に手動コピーすること。
+#
+# 1. このファイルを `local.properties` という名前でコピー
+# 2. 各値を自分の環境用に書き換え
+# 3. `./gradlew :app:assembleDebug` でビルド可能になる
+
+# Android SDK のパス (Android Studio が自動生成するので通常そのままでOK)
+sdk.dir=C\:\\Users\\<your-name>\\AppData\\Local\\Android\\Sdk
+
+# --- OAuth 2.0 (Google Desktop タイプ) ---
+# GCP Console -> API とサービス -> 認証情報 -> OAuth 2.0 クライアント ID
+# クライアントタイプ: 「デスクトップアプリ」を選択して作成すること
+# (Android タイプだと AppAuth + Drive scope で invalid_request になる)
+#
+# CLIENT_ID 形式: "<プロジェクト番号>-<英数字>.apps.googleusercontent.com"
+auth.clientId=YOUR_CLIENT_ID_HERE.apps.googleusercontent.com
+
+# Desktop タイプの client_secret。
+# Google 公式仕様で「Desktop タイプの secret は APK 埋め込み前提・実質公開」と明言:
+# https://developers.google.com/identity/protocols/oauth2/native-app
+# とはいえソース直書きは避けたいのでこちらに分離。
+auth.clientSecret=GOCSPX-YOUR_CLIENT_SECRET_HERE

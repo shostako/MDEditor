@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive icon の前景レイヤ。Material Symbols `edit_note` (Apache License 2.0)。
+  https://fonts.google.com/icons?icon.query=edit+note
+
+  Material Symbols の SVG は viewBox="0 -960 960 960" の特殊な座標系
+  (y軸が下向きだが原点が左下相当) なので、`<group android:translateY="960">` で
+  全体を +960 シフトして VectorDrawable の (0,0)-(960,960) 座標系に合わせる。
+
+  Adaptive icon の safe zone (中央 66%) を意識して scale=0.7 で縮小 + 中央配置。
+  pivotX/Y は scale の中心点、translation の後に適用される。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <group
+        android:translateY="960"
+        android:scaleX="0.7"
+        android:scaleY="0.7"
+        android:pivotX="480"
+        android:pivotY="-480">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M160,-400v-80h280v80H160Zm0,-160v-80h440v80H160Zm0,-160v-80h440v80H160Zm360,560v-123l221,-220q9,-9 20,-13t22,-4q12,0 23,4.5t20,13.5l37,37q8,9 12.5,20t4.5,22q0,11 -4,22.5T863,-380L643,-160H520Zm300,-263l-37,-37 37,37ZM580,-220h38l121,-122 -18,-19 -19,-18 -122,121v38Zm141,-141l-19,-18 37,37 -18,-19Z" />
+    </group>
+</vector>

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.MDEditor" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!--
+      M12: SplashScreen API 用テーマ。
+      Android 12+ ではこの設定がシステムスプラッシュに直接反映され、
+      11 以下では core-splashscreen ライブラリが backport で同様に振る舞う。
+
+      - windowSplashScreenBackground: スプラッシュ画面の背景色
+      - windowSplashScreenAnimatedIcon: 中央に表示するアイコン (Adaptive icon の foreground)
+      - postSplashScreenTheme: スプラッシュ完了後に Activity に適用する本番テーマ
+    -->
+    <style name="Theme.MDEditor.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.MDEditor</item>
+    </style>
+</resources>
