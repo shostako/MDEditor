@@ -13,3 +13,9 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Release keystore (絶対に push しない)
+# 紛失したら同じ署名で再ビルド不能 -> 別途バックアップ必須
+/app/keystore/
+*.jks
+*.keystore

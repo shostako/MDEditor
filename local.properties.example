@@ -21,3 +21,21 @@ auth.clientId=YOUR_CLIENT_ID_HERE.apps.googleusercontent.com
 # https://developers.google.com/identity/protocols/oauth2/native-app
 # とはいえソース直書きは避けたいのでこちらに分離。
 auth.clientSecret=GOCSPX-YOUR_CLIENT_SECRET_HERE
+
+# --- Release keystore (assembleRelease で使う署名) ---
+# 未設定でも debug ビルドは動く。release ビルドだけ未署名になる (=インストール不可)。
+#
+# keystore 生成手順:
+#   keytool -genkeypair \
+#     -keystore app/keystore/release.jks \
+#     -alias mdeditor -keyalg RSA -keysize 2048 -validity 9125 \
+#     -storetype PKCS12 \
+#     -dname "CN=MDEditor, OU=Personal, O=<your-name>, L=<city>, ST=<state>, C=JP"
+#
+# 注: storeFile は app/ ディレクトリ起点の相対パスとして解釈される。
+# 注: keystore ファイル本体 (app/keystore/) と local.properties の両方が
+#     失われると同じ署名で再ビルド不能 -> 別途バックアップ必須。
+release.storeFile=keystore/release.jks
+release.storePassword=YOUR_STORE_PASSWORD_HERE
+release.keyAlias=mdeditor
+release.keyPassword=YOUR_KEY_PASSWORD_HERE

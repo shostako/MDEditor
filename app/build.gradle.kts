@@ -26,6 +26,17 @@ val authReverseClientId: String =
     "com.googleusercontent.apps." +
         authClientId.removeSuffix(".apps.googleusercontent.com")
 
+// release 署名設定。local.properties に release.* が無ければスキップする
+// (debug ビルドは影響なし。release ビルドは未署名 -> インストール不可)。
+// keystore ファイル本体は app/keystore/ 配下 (.gitignore 済)。
+// storeFile は app/ ディレクトリ起点の相対パスとして解釈される。
+val releaseStoreFile: String? = localProperties.getProperty("release.storeFile")
+val releaseStorePassword: String? = localProperties.getProperty("release.storePassword")
+val releaseKeyAlias: String? = localProperties.getProperty("release.keyAlias")
+val releaseKeyPassword: String? = localProperties.getProperty("release.keyPassword")
+val hasReleaseSigning: Boolean = releaseStoreFile != null && releaseStorePassword != null &&
+    releaseKeyAlias != null && releaseKeyPassword != null
+
 android {
     namespace = "com.shostakovich.mdeditor"
     compileSdk {
@@ -56,9 +67,26 @@ android {
         manifestPlaceholders["appAuthRedirectScheme"] = authReverseClientId
     }
 
+    // release ビルド用署名設定 (local.properties に release.* がある時のみ)。
+    // 自前 keystore で長期間 (25年) 有効。debug は ~/.android/debug.keystore 自動。
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            // signingConfigs.release が設定されてれば適用、無ければ未署名 (= 警告のみ)。
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
