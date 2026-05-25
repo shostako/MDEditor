@@ -5,6 +5,7 @@ import android.text.style.ClickableSpan
 import android.util.Log
 import android.view.MotionEvent
 import android.widget.TextView
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -14,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import com.shostakovich.mdeditor.data.vault.VaultIndex
@@ -23,6 +25,7 @@ import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.LinkResolverDef
 import io.noties.markwon.Markwon
 import io.noties.markwon.MarkwonConfiguration
+import io.noties.markwon.core.MarkwonTheme
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.ext.tasklist.TaskListPlugin
@@ -73,6 +76,15 @@ fun MarkdownText(
 ) {
     val context = LocalContext.current
 
+    // ダーク/ライト対応: Markwon は TextView ベースなので、MaterialTheme と自動連動しない。
+    // 明示的に MaterialTheme.colorScheme から色を引いて TextView と Markwon プラグインに注入する。
+    // これが無いと、システムがダークモード時に Compose 背景だけ暗色に切替 → TextView の文字色は
+    // AppCompat 既定 (黒) のまま → 「暗背景 + 黒文字」で読めなくなる (典型的なバグ)。
+    //  - textColor: 本文の文字色。MaterialTheme.colorScheme.onSurface (ライト=黒, ダーク=白)。
+    //  - linkColor: リンク (Wikilink + URL) の色。MaterialTheme.colorScheme.primary。
+    val textColorArgb = MaterialTheme.colorScheme.onSurface.toArgb()
+    val linkColorArgb = MaterialTheme.colorScheme.primary.toArgb()
+
     // クリックハンドラはタッチリスナや Markwon プラグインのクロージャに captured されるので、
     // 最新参照を保持するため rememberUpdatedState で包む。
     val currentOnImageClick by rememberUpdatedState(onImageClick)
@@ -111,9 +123,17 @@ fun MarkdownText(
     }
 
     // Markwon インスタンスはプラグイン構築が重いので remember でキャッシュ。
+    // linkColor は MarkwonTheme に焼き付けるため key に含める (テーマ切替時に rebuild)。
     // linkResolver はクロージャ内で currentOnNoteClick の最新参照を見る (rememberUpdatedState 効果)。
-    val markwon = remember(context, maxImageWidthPx) {
+    val markwon = remember(context, maxImageWidthPx, linkColorArgb) {
         Markwon.builder(context)
+            // MarkwonTheme でリンク色を上書き。デフォルトは TextView.linkTextColor を見るが、
+            // 明示しておく方が確実 (build 環境ごとの差を防ぐ)。
+            .usePlugin(object : AbstractMarkwonPlugin() {
+                override fun configureTheme(builder: MarkwonTheme.Builder) {
+                    builder.linkColor(linkColorArgb)
+                }
+            })
             .usePlugin(StrikethroughPlugin.create())
             .usePlugin(TablePlugin.create(context))
             .usePlugin(TaskListPlugin.create(context))
@@ -206,6 +226,10 @@ fun MarkdownText(
             }
         },
         update = { textView ->
+            // ダーク/ライト切替時に色を更新。setTextColor は Markwon が span を当てる前に
+            // 設定しておくと、span が無いプレーン部分の文字色として使われる。
+            textView.setTextColor(textColorArgb)
+            textView.setLinkTextColor(linkColorArgb)
             markwon.setMarkdown(textView, processedMarkdown)
         }
     )
