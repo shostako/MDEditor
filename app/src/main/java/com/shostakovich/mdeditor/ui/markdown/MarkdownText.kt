@@ -2,6 +2,7 @@ package com.shostakovich.mdeditor.ui.markdown
 
 import android.text.Spannable
 import android.text.style.ClickableSpan
+import android.text.util.Linkify
 import android.util.Log
 import android.view.MotionEvent
 import android.widget.TextView
@@ -138,7 +139,11 @@ fun MarkdownText(
             .usePlugin(TablePlugin.create(context))
             .usePlugin(TaskListPlugin.create(context))
             .usePlugin(HtmlPlugin.create())
-            .usePlugin(LinkifyPlugin.create())
+            // Linkify は autoLink の対象を URL とメールのみに絞る。
+            // デフォルト (Linkify.ALL) だと PHONE_NUMBERS が含まれ、これが「2016-05-13」のような
+            // 日付パターンを電話番号として誤検出する (Obsidian Vault 用途では致命的)。
+            // MAP_ADDRESSES も誤検出が多いので除外。
+            .usePlugin(LinkifyPlugin.create(Linkify.WEB_URLS or Linkify.EMAIL_ADDRESSES))
             .usePlugin(
                 ImagesPlugin.create { plugin ->
                     plugin.addSchemeHandler(DriveSchemeHandler(maxImageWidthPx))
