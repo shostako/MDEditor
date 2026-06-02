@@ -18,21 +18,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.viewinterop.AndroidView
 import com.shostakovich.mdeditor.data.vault.VaultIndex
 import com.shostakovich.mdeditor.markdown.DriveSchemeHandler
+import com.shostakovich.mdeditor.markdown.MathNormalizer
 import com.shostakovich.mdeditor.markdown.WikilinkResolver
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.LinkResolverDef
 import io.noties.markwon.Markwon
 import io.noties.markwon.MarkwonConfiguration
 import io.noties.markwon.core.MarkwonTheme
+import io.noties.markwon.ext.latex.JLatexMathPlugin
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.ext.tasklist.TaskListPlugin
 import io.noties.markwon.html.HtmlPlugin
 import io.noties.markwon.image.AsyncDrawableSpan
 import io.noties.markwon.image.ImagesPlugin
+import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin
 import io.noties.markwon.linkify.LinkifyPlugin
 
 /**
@@ -86,6 +90,13 @@ fun MarkdownText(
     val textColorArgb = MaterialTheme.colorScheme.onSurface.toArgb()
     val linkColorArgb = MaterialTheme.colorScheme.primary.toArgb()
 
+    // 数式 (JLatexMath) の文字サイズ。TextView のデフォルト (AppCompat 既定 14sp 相当) に
+    // 依存させず、本文と同じ px を Compose 側から導出し、数式プラグインと TextView の両方に
+    // 同じ値を注入する。これで本文テキストと数式のフォントサイズが揃う。
+    val bodyFontSizeSp = MaterialTheme.typography.bodyLarge.fontSize
+    val density = LocalDensity.current
+    val textSizePx = with(density) { bodyFontSizeSp.toPx() }
+
     // クリックハンドラはタッチリスナや Markwon プラグインのクロージャに captured されるので、
     // 最新参照を保持するため rememberUpdatedState で包む。
     val currentOnImageClick by rememberUpdatedState(onImageClick)
@@ -113,12 +124,15 @@ fun MarkdownText(
     }
     LaunchedEffect(markdown, parentFolderId, currentFolderPath, indexedCount) {
         processedMarkdown = try {
-            WikilinkResolver(
+            val resolved = WikilinkResolver(
                 parentFolderId = parentFolderId,
                 currentFolderPath = currentFolderPath,
             ).resolveAll(markdown)
+            // Obsidian のインライン数式 $...$ を Markwon が要求する $$...$$ に正規化する。
+            // (Wikilink 解決と独立。$ は [[ ]] と無関係なので順序依存なし)
+            MathNormalizer.normalizeInlineMath(resolved)
         } catch (e: Throwable) {
-            Log.e("MarkdownText", "WikilinkResolver threw", e)
+            Log.e("MarkdownText", "markdown preprocess threw", e)
             markdown
         }
     }
@@ -126,8 +140,13 @@ fun MarkdownText(
     // Markwon インスタンスはプラグイン構築が重いので remember でキャッシュ。
     // linkColor は MarkwonTheme に焼き付けるため key に含める (テーマ切替時に rebuild)。
     // linkResolver はクロージャ内で currentOnNoteClick の最新参照を見る (rememberUpdatedState 効果)。
-    val markwon = remember(context, maxImageWidthPx, linkColorArgb) {
+    val markwon = remember(context, maxImageWidthPx, linkColorArgb, textColorArgb, textSizePx) {
         Markwon.builder(context)
+            // インラインパーサ。$...$ のインライン数式に必須。create() は commonmark-java の
+            // InlineParserImpl 相当のデフォルトを全て含むため、既存のインライン記法
+            // (強調 / コード / リンク / 画像 / オートリンク) は維持される。他プラグインの土台に
+            // なるのでチェーン先頭に置く。
+            .usePlugin(MarkwonInlineParserPlugin.create())
             // MarkwonTheme でリンク色を上書き。デフォルトは TextView.linkTextColor を見るが、
             // 明示しておく方が確実 (build 環境ごとの差を防ぐ)。
             .usePlugin(object : AbstractMarkwonPlugin() {
@@ -144,6 +163,18 @@ fun MarkdownText(
             // 日付パターンを電話番号として誤検出する (Obsidian Vault 用途では致命的)。
             // MAP_ADDRESSES も誤検出が多いので除外。
             .usePlugin(LinkifyPlugin.create(Linkify.WEB_URLS or Linkify.EMAIL_ADDRESSES))
+            // 数式 (LaTeX)。ブロック $$...$$ + インライン $...$。色は本文と同じ onSurface にして
+            // ダーク/ライト切替に追従させる。数式は Drawable 画像なので TextView.setTextColor は
+            // 効かず、色はプラグイン構築時に焼き込む。だから textColorArgb を remember key に含める。
+            .usePlugin(
+                JLatexMathPlugin.create(textSizePx) { builder ->
+                    builder.blocksEnabled(true)
+                    builder.blocksLegacy(false)   // 4.3.0+ の新ブロックパーサ ($$...$$)
+                    builder.inlinesEnabled(true)  // インライン $...$ (要 inline-parser)
+                    builder.theme().textColor(textColorArgb)
+                    builder.errorHandler { _, _ -> null }  // パース失敗は空表示にしクラッシュ回避
+                }
+            )
             .usePlugin(
                 ImagesPlugin.create { plugin ->
                     plugin.addSchemeHandler(DriveSchemeHandler(maxImageWidthPx))
@@ -174,6 +205,9 @@ fun MarkdownText(
         modifier = modifier,
         factory = { ctx ->
             TextView(ctx).apply {
+                // 本文 px を数式 px と同一にする (textSizePx は MaterialTheme.bodyLarge 由来)。
+                // これをしないと TextView は AppCompat 既定サイズになり、本文と数式でサイズがズレる。
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, textSizePx)
                 // 本文選択を有効化。これは movementMethod を ArrowKeyMovementMethod に
                 // 切り替えるため、URLSpan のクリック (LinkMovementMethod 任せ) は効かなくなる。
                 // 代わりに setOnTouchListener で URLSpan / AsyncDrawableSpan を自前で

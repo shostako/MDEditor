@@ -143,6 +143,9 @@ dependencies {
     implementation(libs.markwon.linkify)
     // M5: 画像表示。SchemeHandler で Drive 取得をカスタムする。
     implementation(libs.markwon.image)
+    // 数式 (LaTeX): JLatexMath ベース。inline-parser はインライン $...$ に必須。
+    implementation(libs.markwon.ext.latex)
+    implementation(libs.markwon.inline.parser)
     // M8: Room (検索インデックス永続化)
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
