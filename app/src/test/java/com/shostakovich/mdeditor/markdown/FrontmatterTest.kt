@@ -133,4 +133,58 @@ class FrontmatterTest {
         assertEquals("# heading", Frontmatter.stripBody(md))
         assertEquals("plain text", Frontmatter.stripBody("plain text"))
     }
+
+    // --- parseProperties ---
+
+    @Test
+    fun `parseProperties - simple key values`() {
+        val fm = """
+            ---
+            title: 極薄プレート開発メモ
+            author: shostako
+            created: 2026-06-01 09:30
+            ---
+        """.trimIndent()
+        val props = Frontmatter.parseProperties(fm)
+        assertEquals(3, props.size)
+        assertEquals(Frontmatter.Property("title", listOf("極薄プレート開発メモ")), props[0])
+        assertEquals(Frontmatter.Property("author", listOf("shostako")), props[1])
+        assertEquals(Frontmatter.Property("created", listOf("2026-06-01 09:30")), props[2])
+    }
+
+    @Test
+    fun `parseProperties - block list and inline list`() {
+        val fm = """
+            tags:
+              - molding
+              - acf
+            aliases: [note1, "note 2"]
+        """.trimIndent()
+        val props = Frontmatter.parseProperties(fm)
+        assertEquals(Frontmatter.Property("tags", listOf("molding", "acf")), props[0])
+        assertEquals(Frontmatter.Property("aliases", listOf("note1", "note 2")), props[1])
+    }
+
+    @Test
+    fun `parseProperties - quoted value and empty key`() {
+        val fm = """
+            title: "hello: world"
+            cssclass:
+        """.trimIndent()
+        val props = Frontmatter.parseProperties(fm)
+        assertEquals(Frontmatter.Property("title", listOf("hello: world")), props[0])
+        assertEquals(Frontmatter.Property("cssclass", emptyList<String>()), props[1])
+    }
+
+    @Test
+    fun `parseProperties - garbage lines are skipped without crash`() {
+        val fm = """
+            valid: ok
+            just a broken line
+            # comment
+        """.trimIndent()
+        val props = Frontmatter.parseProperties(fm)
+        assertEquals(1, props.size)
+        assertEquals("valid", props[0].key)
+    }
 }

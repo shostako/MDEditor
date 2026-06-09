@@ -17,6 +17,7 @@ import androidx.lifecycle.lifecycleScope
 import com.shostakovich.mdeditor.auth.AuthManager
 import com.shostakovich.mdeditor.data.index.IndexDatabaseProvider
 import com.shostakovich.mdeditor.data.index.PageTokenStorage
+import com.shostakovich.mdeditor.data.prefs.UiPrefsStorage
 import com.shostakovich.mdeditor.data.vault.VaultIndex
 import com.shostakovich.mdeditor.data.vault.VaultRootStorage
 import com.shostakovich.mdeditor.ui.screen.SplashContent
@@ -40,6 +41,8 @@ class MainActivity : ComponentActivity() {
         IndexDatabaseProvider.init(this)
         // M8-b: Drive `changes` API の pageToken を保存する SharedPreferences を初期化
         PageTokenStorage.init(this)
+        // UI 表示設定 (frontmatter パネル表示など) の SharedPreferences を初期化
+        UiPrefsStorage.init(this)
         bootstrapVaultIndex()
 
         enableEdgeToEdge()

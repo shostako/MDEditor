@@ -20,6 +20,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.shostakovich.mdeditor.data.prefs.UiPrefsStorage
 import com.shostakovich.mdeditor.data.vault.FileContentCache
 import com.shostakovich.mdeditor.data.vault.VaultIndex
 import com.shostakovich.mdeditor.data.vault.VaultRepository
@@ -89,6 +91,8 @@ fun EditorScreen(
     var frontmatter by remember { mutableStateOf<String?>(null) }
     var body by remember { mutableStateOf("") }
     var editingBody by remember { mutableStateOf("") }
+    // プロパティ (frontmatter) パネルの表示トグル。永続化される (UiPrefsStorage)。
+    var showFrontmatter by remember { mutableStateOf(UiPrefsStorage.loadShowFrontmatter()) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var mode by remember { mutableStateOf(EditorMode.Preview) }
     var reloadKey by remember { mutableStateOf(0) }
@@ -211,6 +215,18 @@ fun EditorScreen(
                 selected = mode == EditorMode.Edit,
                 onClick = { mode = EditorMode.Edit }
             )
+            // プロパティ表示トグル。frontmatter があるファイルでのみ表示。
+            // Preview / Edit どちらのモードでも切替可能 (パネル自体は Preview で描画)。
+            if (frontmatter != null) {
+                ModeButton(
+                    text = "📋",
+                    selected = showFrontmatter,
+                    onClick = {
+                        showFrontmatter = !showFrontmatter
+                        UiPrefsStorage.saveShowFrontmatter(showFrontmatter)
+                    }
+                )
+            }
             Spacer(Modifier.weight(1f))
             // 編集モード時のみ保存ボタンを表示。dirty かつ Idle/Success の時に活性。
             if (mode == EditorMode.Edit) {
@@ -276,13 +292,23 @@ fun EditorScreen(
             }
             mode == EditorMode.Preview -> {
                 val scrollState = rememberScrollState()
-                Box(
+                Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(scrollState)
                         .padding(vertical = 8.dp)
                 ) {
-                    // Preview は保存済み body を表示 (frontmatter は除外、編集中バッファは表示しない)
+                    // プロパティパネル: トグル ON かつ frontmatter があれば本文の上に表示
+                    val fm = frontmatter
+                    if (showFrontmatter && fm != null) {
+                        FrontmatterPanel(
+                            frontmatter = fm,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                        )
+                    }
+                    // Preview は保存済み body を表示 (編集中バッファは表示しない)
                     MarkdownText(
                         markdown = body,
                         parentFolderId = parentFolderId,
@@ -347,6 +373,69 @@ fun EditorScreen(
 }
 
 private enum class EditorMode { Preview, Edit }
+
+/**
+ * frontmatter のプロパティを Obsidian 風の key-value 表で表示するパネル (read-only)。
+ * パース不能な行は Frontmatter.parseProperties 側でスキップされる。
+ * 1 件もパースできなければ生テキストをそのまま表示する (情報を握り潰さない)。
+ */
+@Composable
+private fun FrontmatterPanel(
+    frontmatter: String,
+    modifier: Modifier = Modifier,
+) {
+    val properties = remember(frontmatter) { Frontmatter.parseProperties(frontmatter) }
+    Surface(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        tonalElevation = 1.dp,
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = "プロパティ",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 6.dp)
+            )
+            if (properties.isEmpty()) {
+                // パース不能だった場合のフォールバック: delimiter を除いた生テキスト
+                Text(
+                    text = frontmatter
+                        .lines()
+                        .filterNot { it.trim() == "---" }
+                        .joinToString("\n")
+                        .trim(),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else {
+                properties.forEach { prop ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Text(
+                            text = prop.key,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.width(110.dp)
+                        )
+                        Text(
+                            text = when {
+                                prop.values.isEmpty() -> "—"
+                                else -> prop.values.joinToString(", ")
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 /**
  * 保存処理の状態。
