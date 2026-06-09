@@ -320,14 +320,28 @@ fun EditorScreen(
                 }
             }
             mode == EditorMode.Edit -> {
-                // Edit でも frontmatter は隠して body だけ編集可能にする。
+                // Edit でも frontmatter は body と分離したまま (編集対象は body のみ)。
                 // 保存時に frontmatter を結合して書き戻す (doSave 内)。
-                OutlinedTextField(
-                    value = editingBody,
-                    onValueChange = { editingBody = it },
-                    modifier = Modifier.fillMaxSize(),
-                    label = { Text("本文 (Markdown)") }
-                )
+                // トグル ON ならエディタの上に read-only パネルとして表示する。
+                Column(modifier = Modifier.fillMaxSize()) {
+                    val fm = frontmatter
+                    if (showFrontmatter && fm != null) {
+                        FrontmatterPanel(
+                            frontmatter = fm,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                        )
+                    }
+                    OutlinedTextField(
+                        value = editingBody,
+                        onValueChange = { editingBody = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        label = { Text("本文 (Markdown)") }
+                    )
+                }
             }
         }
     }
