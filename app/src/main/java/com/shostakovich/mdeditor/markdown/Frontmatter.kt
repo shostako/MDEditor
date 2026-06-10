@@ -51,6 +51,33 @@ object Frontmatter {
     fun stripBody(markdown: String): String = split(markdown).body
 
     /**
+     * delimiter 込みの frontmatter 文字列から中身の YAML だけを取り出す。
+     * 生 YAML 編集 UI に渡す用。delimiter 形式にマッチしなければ
+     * delimiter 行だけ除去するフォールバックで返す (情報を握り潰さない)。
+     */
+    fun innerText(frontmatter: String): String {
+        val match = FRONTMATTER_REGEX.find(frontmatter)
+        if (match != null && match.range.first == 0) {
+            return match.groupValues[1]
+        }
+        return frontmatter
+            .lines()
+            .filterNot { it.trim() == "---" }
+            .joinToString("\n")
+            .trim('\n')
+    }
+
+    /**
+     * 編集後の YAML 中身を delimiter 込み (`---\n...\n---\n`) に包み直す。
+     * inner が空白のみなら null = frontmatter なしファイルとして扱う。
+     * 末尾改行は正規化する (split() が返すのと同じ、body 先頭に直結できる形)。
+     */
+    fun wrap(inner: String): String? {
+        if (inner.isBlank()) return null
+        return "---\n" + inner.trimEnd('\n') + "\n---\n"
+    }
+
+    /**
      * frontmatter 内の 1 プロパティ。
      * 単一値は values が 1 要素、リスト値 (`tags:` + `- x` や `[a, b]`) は複数要素。
      * 値なしキー (`key:` のみ) は values が空リスト。

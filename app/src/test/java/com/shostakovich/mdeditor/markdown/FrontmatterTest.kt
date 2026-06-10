@@ -187,4 +187,38 @@ class FrontmatterTest {
         assertEquals(1, props.size)
         assertEquals("valid", props[0].key)
     }
+
+    // --- innerText / wrap (生 YAML 編集用) ---
+
+    @Test
+    fun `innerText - strips delimiters from full frontmatter`() {
+        val fm = "---\ntitle: hello\ntags:\n  - a\n---\n"
+        assertEquals("title: hello\ntags:\n  - a", Frontmatter.innerText(fm))
+    }
+
+    @Test
+    fun `innerText - fallback for non-matching input`() {
+        assertEquals("title: hello", Frontmatter.innerText("title: hello"))
+    }
+
+    @Test
+    fun `wrap - rebuilds delimited frontmatter with normalized newline`() {
+        assertEquals("---\ntitle: hello\n---\n", Frontmatter.wrap("title: hello"))
+        assertEquals("---\ntitle: hello\n---\n", Frontmatter.wrap("title: hello\n\n"))
+    }
+
+    @Test
+    fun `wrap - blank inner means no frontmatter`() {
+        assertEquals(null, Frontmatter.wrap(""))
+        assertEquals(null, Frontmatter.wrap("  \n "))
+    }
+
+    @Test
+    fun `innerText and wrap roundtrip preserves split-compatible format`() {
+        val original = "---\ntitle: t\nauthor: a\n---\nbody text"
+        val split = Frontmatter.split(original)
+        val inner = Frontmatter.innerText(split.frontmatter!!)
+        val rebuilt = (Frontmatter.wrap(inner) ?: "") + split.body
+        assertEquals(original, rebuilt)
+    }
 }

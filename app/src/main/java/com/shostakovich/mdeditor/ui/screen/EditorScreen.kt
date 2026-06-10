@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -85,12 +86,15 @@ fun EditorScreen(
     // M10: frontmatter / body 分離管理。
     //   - frontmatter: `---\n...\n---\n` 全体 (delimiter 込み)。無ければ null
     //   - body: frontmatter を抜いた本文。Preview/Edit とも body だけ表示する
-    //   - editingBody: Edit モードの編集中バッファ
-    //   - 保存時は `(frontmatter ?: "") + editingBody` を Drive に書き戻す
-    //     → frontmatter が消える事故を防ぐ
+    //   - editingBody: Edit モードの編集中バッファ (本文)
+    //   - editingFrontmatter: Edit モードの編集中バッファ (frontmatter 中身の生 YAML、
+    //     delimiter なし)。トグル ON 時のみ UI に出るが、状態自体は常に保持する
+    //   - 保存時は `(wrap(editingFrontmatter) ?: "") + editingBody` を Drive に書き戻す
+    //     → frontmatter が消える事故を防ぎつつ、編集も反映する
     var frontmatter by remember { mutableStateOf<String?>(null) }
     var body by remember { mutableStateOf("") }
     var editingBody by remember { mutableStateOf("") }
+    var editingFrontmatter by remember { mutableStateOf("") }
     // プロパティ (frontmatter) パネルの表示トグル。永続化される (UiPrefsStorage)。
     var showFrontmatter by remember { mutableStateOf(UiPrefsStorage.loadShowFrontmatter()) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -103,7 +107,9 @@ fun EditorScreen(
     // M7: dirty 状態で戻ろうとした時の確認 Dialog 表示フラグ
     var showDiscardDialog by remember { mutableStateOf(false) }
 
-    val isDirty = editingBody != body
+    // 保存済み frontmatter の中身 (生 YAML)。editingFrontmatter との比較基準
+    val savedFrontmatterInner = frontmatter?.let { Frontmatter.innerText(it) } ?: ""
+    val isDirty = editingBody != body || editingFrontmatter != savedFrontmatterInner
 
     LaunchedEffect(fileId, reloadKey) {
         isLoading = true
@@ -113,6 +119,7 @@ fun EditorScreen(
         frontmatter = null
         body = ""
         editingBody = ""
+        editingFrontmatter = ""
         saveState = SaveState.Idle
         try {
             coroutineScope {
@@ -123,6 +130,7 @@ fun EditorScreen(
                 frontmatter = split.frontmatter
                 body = split.body
                 editingBody = split.body
+                editingFrontmatter = split.frontmatter?.let { Frontmatter.innerText(it) } ?: ""
                 try {
                     val meta = metaDeferred.await()
                     fileName = meta.name
@@ -139,16 +147,20 @@ fun EditorScreen(
         }
     }
 
-    // 保存処理。成功すると body を editingBody で上書き、キャッシュ無効化。
-    // frontmatter は保持して Drive へは frontmatter + editingBody で書き戻す。
+    // 保存処理。成功すると body / frontmatter を編集バッファで上書き、キャッシュ無効化。
+    // frontmatter は editingFrontmatter を delimiter 込みに包み直して書き戻す。
+    // 編集バッファが空白のみなら frontmatter なしファイルになる (wrap が null を返す)。
     fun doSave(onAfter: () -> Unit = {}) {
         if (saveState is SaveState.Saving) return
         scope.launch {
             saveState = SaveState.Saving
             try {
-                val toSave = (frontmatter ?: "") + editingBody
+                val newFrontmatter = Frontmatter.wrap(editingFrontmatter)
+                val toSave = (newFrontmatter ?: "") + editingBody
                 VaultRepository.updateTextFile(fileId, toSave)
                 body = editingBody
+                frontmatter = newFrontmatter
+                editingFrontmatter = newFrontmatter?.let { Frontmatter.innerText(it) } ?: ""
                 FileContentCache.invalidate(fileId)
                 saveState = SaveState.Success
                 onAfter()
@@ -320,17 +332,21 @@ fun EditorScreen(
                 }
             }
             mode == EditorMode.Edit -> {
-                // Edit でも frontmatter は body と分離したまま (編集対象は body のみ)。
-                // 保存時に frontmatter を結合して書き戻す (doSave 内)。
-                // トグル ON ならエディタの上に read-only パネルとして表示する。
+                // Edit でも frontmatter と body は分離したまま。
+                // トグル ON なら frontmatter を生 YAML として編集できるフィールドを
+                // エディタ上部に表示する (案A: 構文の責任はユーザー持ち)。
+                // 保存時に doSave 内で wrap + 結合して書き戻す。
                 Column(modifier = Modifier.fillMaxSize()) {
-                    val fm = frontmatter
-                    if (showFrontmatter && fm != null) {
-                        FrontmatterPanel(
-                            frontmatter = fm,
+                    if (showFrontmatter && frontmatter != null) {
+                        OutlinedTextField(
+                            value = editingFrontmatter,
+                            onValueChange = { editingFrontmatter = it },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 8.dp)
+                                .heightIn(max = 220.dp)
+                                .padding(bottom = 8.dp),
+                            label = { Text("プロパティ (YAML)") },
+                            textStyle = MaterialTheme.typography.bodySmall,
                         )
                     }
                     OutlinedTextField(
