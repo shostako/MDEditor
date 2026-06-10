@@ -20,6 +20,7 @@ import com.shostakovich.mdeditor.data.index.PageTokenStorage
 import com.shostakovich.mdeditor.data.prefs.UiPrefsStorage
 import com.shostakovich.mdeditor.data.vault.VaultIndex
 import com.shostakovich.mdeditor.data.vault.VaultRootStorage
+import com.shostakovich.mdeditor.tts.TtsManager
 import com.shostakovich.mdeditor.ui.screen.SplashContent
 import com.shostakovich.mdeditor.ui.theme.MDEditorTheme
 import kotlinx.coroutines.delay
@@ -43,6 +44,8 @@ class MainActivity : ComponentActivity() {
         PageTokenStorage.init(this)
         // UI 表示設定 (frontmatter パネル表示など) の SharedPreferences を初期化
         UiPrefsStorage.init(this)
+        // TTS 読み上げ (applicationContext 保持のみ。エンジン生成は初回再生まで遅延)
+        TtsManager.init(this)
         bootstrapVaultIndex()
 
         enableEdgeToEdge()

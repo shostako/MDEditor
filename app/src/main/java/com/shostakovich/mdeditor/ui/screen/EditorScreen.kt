@@ -1,5 +1,10 @@
 package com.shostakovich.mdeditor.ui.screen
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,14 +39,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.shostakovich.mdeditor.data.prefs.UiPrefsStorage
 import com.shostakovich.mdeditor.data.vault.FileContentCache
 import com.shostakovich.mdeditor.data.vault.VaultIndex
 import com.shostakovich.mdeditor.data.vault.VaultRepository
 import com.shostakovich.mdeditor.markdown.Frontmatter
+import com.shostakovich.mdeditor.tts.TtsManager
+import com.shostakovich.mdeditor.tts.TtsService
+import com.shostakovich.mdeditor.tts.TtsStartHint
 import com.shostakovich.mdeditor.ui.markdown.MarkdownText
 import com.shostakovich.mdeditor.ui.theme.MDEditorTheme
 import kotlinx.coroutines.async
@@ -106,6 +116,61 @@ fun EditorScreen(
     var saveState by remember { mutableStateOf<SaveState>(SaveState.Idle) }
     // M7: dirty 状態で戻ろうとした時の確認 Dialog 表示フラグ
     var showDiscardDialog by remember { mutableStateOf(false) }
+
+    // TTS 読み上げ状態。TtsManager はプロセスシングルトンなので、画面離脱・回転・
+    // 復帰しても collectAsState の購読だけで状態が自動復元される。
+    val ttsState by TtsManager.state.collectAsState()
+    val isTtsThisFile = when (val t = ttsState) {
+        is TtsManager.TtsState.Playing -> t.fileId == fileId
+        is TtsManager.TtsState.Paused -> t.fileId == fileId
+        is TtsManager.TtsState.Preparing -> t.fileId == fileId
+        else -> false
+    }
+    var ttsSpeed by remember { mutableStateOf(UiPrefsStorage.loadTtsSpeed()) }
+    val context = LocalContext.current
+
+    // 「ここから読み上げ」用: 通知権限ダイアログを挟む場合に開始位置の手がかりを持ち越す
+    var pendingTtsHint by remember { mutableStateOf<TtsStartHint?>(null) }
+
+    // 読み上げ開始。play が true (= チャンクあり) の時だけ Foreground Service を起動する。
+    // テキストは Intent に載せず TtsManager 経由で渡す (binder サイズ上限の回避)。
+    // hint は開始位置の手がかり (直前見出し + 選択テキスト片)。null なら先頭から。
+    fun startTts(hint: TtsStartHint? = null) {
+        if (body.isBlank()) return
+        if (TtsManager.play(body, fileId, fileName, hint)) TtsService.start(context)
+    }
+
+    // Android 13+ の通知権限。拒否されても再生は続行する (通知が出ないだけで FGS は動く)
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) {
+        startTts(pendingTtsHint)
+        pendingTtsHint = null
+    }
+
+    // 読み上げ開始の入口 (🔊ボタン / 選択メニュー共通)。必要なら先に通知権限を要求する
+    fun requestTtsStart(hint: TtsStartHint?) {
+        val needPermission = Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        if (needPermission) {
+            pendingTtsHint = hint
+            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            startTts(hint)
+        }
+    }
+
+    fun onTtsButtonClick() {
+        val t = ttsState
+        when {
+            t is TtsManager.TtsState.Playing && t.fileId == fileId -> TtsManager.pause()
+            t is TtsManager.TtsState.Paused && t.fileId == fileId -> TtsManager.resume()
+            t is TtsManager.TtsState.Preparing && t.fileId == fileId -> Unit  // 起動中は待つ
+            else -> requestTtsStart(null)
+        }
+    }
 
     // 保存済み frontmatter の中身 (生 YAML)。editingFrontmatter との比較基準
     val savedFrontmatterInner = frontmatter?.let { Frontmatter.innerText(it) } ?: ""
@@ -240,6 +305,14 @@ fun EditorScreen(
                 )
             }
             Spacer(Modifier.weight(1f))
+            // TTS 読み上げ。再生中はこのファイルの一時停止/再開トグルとして振る舞う。
+            if (!isLoading && errorMessage == null) {
+                ModeButton(
+                    text = "🔊",
+                    selected = isTtsThisFile,
+                    onClick = { onTtsButtonClick() }
+                )
+            }
             // 編集モード時のみ保存ボタンを表示。dirty かつ Idle/Success の時に活性。
             if (mode == EditorMode.Edit) {
                 Button(
@@ -279,6 +352,51 @@ fun EditorScreen(
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(vertical = 2.dp)
             )
+            else -> Unit
+        }
+        // TTS 操作バー: このファイルを読み上げ中/一時停止中のときだけ表示。
+        // エラーはファイルを問わず表示 (グローバル状態なので ✕ で消せる)。
+        when (val t = ttsState) {
+            is TtsManager.TtsState.Playing -> if (t.fileId == fileId) {
+                TtsBar(
+                    playing = true, chunk = t.chunk, total = t.total, speed = ttsSpeed,
+                    onPlayPause = { TtsManager.pause() },
+                    onStop = { TtsManager.stop() },
+                    onCycleSpeed = {
+                        val next = TtsManager.nextSpeed()
+                        TtsManager.setSpeed(next)
+                        ttsSpeed = next
+                    },
+                )
+            }
+            is TtsManager.TtsState.Paused -> if (t.fileId == fileId) {
+                TtsBar(
+                    playing = false, chunk = t.chunk, total = t.total, speed = ttsSpeed,
+                    onPlayPause = { TtsManager.resume() },
+                    onStop = { TtsManager.stop() },
+                    onCycleSpeed = {
+                        val next = TtsManager.nextSpeed()
+                        TtsManager.setSpeed(next)
+                        ttsSpeed = next
+                    },
+                )
+            }
+            is TtsManager.TtsState.Error -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "読み上げ: ${t.message}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { TtsManager.stop() }) {
+                        Text("✕")
+                    }
+                }
+            }
             else -> Unit
         }
         HorizontalDivider()
@@ -327,6 +445,9 @@ fun EditorScreen(
                         currentFolderPath = currentFolderPath,
                         onImageClick = { fid -> viewerFileId = fid },
                         onNoteClick = onNoteClick,
+                        // テキスト長押し選択 → メニュー「ここから読み上げ」。
+                        // 再生中でも選択位置から読み直す (ジャンプとして機能する)
+                        onReadAloudFrom = { hint -> requestTtsStart(hint) },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -493,6 +614,51 @@ private fun ModeButton(
     } else {
         OutlinedButton(onClick = onClick) {
             Text(text)
+        }
+    }
+}
+
+/**
+ * TTS 読み上げの操作バー。読み上げ中/一時停止中に本文の上へ表示される。
+ * ⏸/▶ (一時停止・再開)、⏹ (停止)、速度サイクル (0.75→1.0→1.25→1.5→2.0x)、進捗。
+ */
+@Composable
+private fun TtsBar(
+    playing: Boolean,
+    chunk: Int,
+    total: Int,
+    speed: Float,
+    onPlayPause: () -> Unit,
+    onStop: () -> Unit,
+    onCycleSpeed: () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.padding(horizontal = 8.dp),
+        ) {
+            TextButton(onClick = onPlayPause) {
+                Text(if (playing) "⏸" else "▶")
+            }
+            TextButton(onClick = onStop) {
+                Text("⏹")
+            }
+            TextButton(onClick = onCycleSpeed) {
+                Text("${speed}x", style = MaterialTheme.typography.bodySmall)
+            }
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "$chunk / $total",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

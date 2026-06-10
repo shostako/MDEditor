@@ -49,8 +49,8 @@ android {
         applicationId = "com.shostakovich.mdeditor"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.5"
+        versionCode = 11
+        versionName = "1.7.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -152,6 +152,9 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     // M12: Android 12+ SplashScreen API (古い API では Theme.SplashScreen backport)
     implementation(libs.androidx.core.splashscreen)
+    // TTS 読み上げ: MediaSessionCompat + NotificationCompat.MediaStyle 用。
+    // media3-session は Player 実装前提で TTS には過剰なので androidx.media を使う。
+    implementation(libs.androidx.media)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(platform(libs.androidx.compose.bom))

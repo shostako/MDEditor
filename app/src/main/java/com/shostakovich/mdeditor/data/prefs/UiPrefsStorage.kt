@@ -11,10 +11,12 @@ import android.content.SharedPreferences
  *  - showFrontmatter: Preview でプロパティ (frontmatter) パネルを表示するか。
  *    EditorScreen のトグルで切替え、次回起動後も維持される。デフォルト false
  *    (従来挙動 = 本文のみ表示 と互換)。
+ *  - ttsSpeed: 読み上げ速度 (TextToSpeech.setSpeechRate に渡す倍率)。デフォルト 1.0
  */
 object UiPrefsStorage {
     private const val PREFS_NAME = "mdeditor_ui_prefs"
     private const val KEY_SHOW_FRONTMATTER = "show_frontmatter"
+    private const val KEY_TTS_SPEED = "tts_speed"
 
     @Volatile
     private var prefs: SharedPreferences? = null
@@ -34,5 +36,12 @@ object UiPrefsStorage {
 
     fun saveShowFrontmatter(value: Boolean) {
         prefs?.edit()?.putBoolean(KEY_SHOW_FRONTMATTER, value)?.apply()
+    }
+
+    fun loadTtsSpeed(): Float =
+        prefs?.getFloat(KEY_TTS_SPEED, 1.0f) ?: 1.0f
+
+    fun saveTtsSpeed(value: Float) {
+        prefs?.edit()?.putFloat(KEY_TTS_SPEED, value)?.apply()
     }
 }
