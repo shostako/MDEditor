@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +40,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -51,7 +53,6 @@ import com.shostakovich.mdeditor.data.vault.VaultRepository
 import com.shostakovich.mdeditor.markdown.Frontmatter
 import com.shostakovich.mdeditor.tts.TtsManager
 import com.shostakovich.mdeditor.tts.TtsService
-import com.shostakovich.mdeditor.tts.TtsStartHint
 import com.shostakovich.mdeditor.ui.markdown.MarkdownText
 import com.shostakovich.mdeditor.ui.theme.MDEditorTheme
 import kotlinx.coroutines.async
@@ -129,36 +130,31 @@ fun EditorScreen(
     var ttsSpeed by remember { mutableStateOf(UiPrefsStorage.loadTtsSpeed()) }
     val context = LocalContext.current
 
-    // 「ここから読み上げ」用: 通知権限ダイアログを挟む場合に開始位置の手がかりを持ち越す
-    var pendingTtsHint by remember { mutableStateOf<TtsStartHint?>(null) }
-
     // 読み上げ開始。play が true (= チャンクあり) の時だけ Foreground Service を起動する。
-    // テキストは Intent に載せず TtsManager 経由で渡す (binder サイズ上限の回避)。
-    // hint は開始位置の手がかり (直前見出し + 選択テキスト片)。null なら先頭から。
-    fun startTts(hint: TtsStartHint? = null) {
+    // テキストは Intent に載せず TtsManager 経由で渡す (binder サイズ上限の回避)。常に先頭から
+    // 始め、セクション移動は TtsBar の ⏮⏭ (TtsManager.stepPrev/stepNext) で行う。
+    fun startTts() {
         if (body.isBlank()) return
-        if (TtsManager.play(body, fileId, fileName, hint)) TtsService.start(context)
+        if (TtsManager.play(body, fileId, fileName)) TtsService.start(context)
     }
 
     // Android 13+ の通知権限。拒否されても再生は続行する (通知が出ないだけで FGS は動く)
     val notifPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) {
-        startTts(pendingTtsHint)
-        pendingTtsHint = null
+        startTts()
     }
 
-    // 読み上げ開始の入口 (🔊ボタン / 選択メニュー共通)。必要なら先に通知権限を要求する
-    fun requestTtsStart(hint: TtsStartHint?) {
+    // 読み上げ開始の入口 (🔊ボタン)。必要なら先に通知権限を要求する
+    fun requestTtsStart() {
         val needPermission = Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(
                 context, Manifest.permission.POST_NOTIFICATIONS,
             ) != PackageManager.PERMISSION_GRANTED
         if (needPermission) {
-            pendingTtsHint = hint
             notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            startTts(hint)
+            startTts()
         }
     }
 
@@ -168,7 +164,7 @@ fun EditorScreen(
             t is TtsManager.TtsState.Playing && t.fileId == fileId -> TtsManager.pause()
             t is TtsManager.TtsState.Paused && t.fileId == fileId -> TtsManager.resume()
             t is TtsManager.TtsState.Preparing && t.fileId == fileId -> Unit  // 起動中は待つ
-            else -> requestTtsStart(null)
+            else -> requestTtsStart()
         }
     }
 
@@ -360,6 +356,8 @@ fun EditorScreen(
             is TtsManager.TtsState.Playing -> if (t.fileId == fileId) {
                 TtsBar(
                     playing = true, chunk = t.chunk, total = t.total, speed = ttsSpeed,
+                    onStepPrev = { TtsManager.stepPrev() },
+                    onStepNext = { TtsManager.stepNext() },
                     onPlayPause = { TtsManager.pause() },
                     onStop = { TtsManager.stop() },
                     onCycleSpeed = {
@@ -372,6 +370,8 @@ fun EditorScreen(
             is TtsManager.TtsState.Paused -> if (t.fileId == fileId) {
                 TtsBar(
                     playing = false, chunk = t.chunk, total = t.total, speed = ttsSpeed,
+                    onStepPrev = { TtsManager.stepPrev() },
+                    onStepNext = { TtsManager.stepNext() },
                     onPlayPause = { TtsManager.resume() },
                     onStop = { TtsManager.stop() },
                     onCycleSpeed = {
@@ -445,9 +445,6 @@ fun EditorScreen(
                         currentFolderPath = currentFolderPath,
                         onImageClick = { fid -> viewerFileId = fid },
                         onNoteClick = onNoteClick,
-                        // テキスト長押し選択 → メニュー「ここから読み上げ」。
-                        // 再生中でも選択位置から読み直す (ジャンプとして機能する)
-                        onReadAloudFrom = { hint -> requestTtsStart(hint) },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -620,7 +617,9 @@ private fun ModeButton(
 
 /**
  * TTS 読み上げの操作バー。読み上げ中/一時停止中に本文の上へ表示される。
- * ⏸/▶ (一時停止・再開)、⏹ (停止)、速度サイクル (0.75→1.0→1.25→1.5→2.0x)、進捗。
+ * ⏮⏭ (前/次の見出しセクションへ移動)、⏸/▶ (一時停止・再開)、⏹ (停止)、
+ * 速度サイクル (0.75→1.0→1.25→1.5→2.0x)、進捗。
+ * ⏮⏭ は見出しのないノートでは無反応 (TtsManager 側で弾く)。
  */
 @Composable
 private fun TtsBar(
@@ -628,6 +627,8 @@ private fun TtsBar(
     chunk: Int,
     total: Int,
     speed: Float,
+    onStepPrev: () -> Unit,
+    onStepNext: () -> Unit,
     onPlayPause: () -> Unit,
     onStop: () -> Unit,
     onCycleSpeed: () -> Unit,
@@ -641,18 +642,14 @@ private fun TtsBar(
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            modifier = Modifier.padding(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
         ) {
-            TextButton(onClick = onPlayPause) {
-                Text(if (playing) "⏸" else "▶")
-            }
-            TextButton(onClick = onStop) {
-                Text("⏹")
-            }
-            TextButton(onClick = onCycleSpeed) {
-                Text("${speed}x", style = MaterialTheme.typography.bodySmall)
-            }
+            TtsControlButton("⏮", onStepPrev)
+            TtsControlButton(if (playing) "⏸" else "▶", onPlayPause)
+            TtsControlButton("⏭", onStepNext)
+            TtsControlButton("⏹", onStop)
+            TtsControlButton("${speed}x", onCycleSpeed)
             Spacer(Modifier.weight(1f))
             Text(
                 text = "$chunk / $total",
@@ -661,6 +658,23 @@ private fun TtsBar(
             )
         }
     }
+}
+
+/**
+ * TtsBar 用のコンパクトな操作ボタン。ボタンが5個並ぶので、最小幅制約のある
+ * Button/TextButton ではなく clickable な Text にして横幅を詰める。
+ */
+@Composable
+private fun TtsControlButton(label: String, onClick: () -> Unit) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+    )
 }
 
 @Preview(showBackground = true)

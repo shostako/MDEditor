@@ -1,13 +1,9 @@
 package com.shostakovich.mdeditor.ui.markdown
 
 import android.text.Spannable
-import android.text.Spanned
 import android.text.style.ClickableSpan
 import android.text.util.Linkify
 import android.util.Log
-import android.view.ActionMode
-import android.view.Menu
-import android.view.MenuItem
 import android.view.MotionEvent
 import android.widget.TextView
 import androidx.compose.material3.MaterialTheme
@@ -28,9 +24,6 @@ import com.shostakovich.mdeditor.data.vault.VaultIndex
 import com.shostakovich.mdeditor.markdown.DriveSchemeHandler
 import com.shostakovich.mdeditor.markdown.MathNormalizer
 import com.shostakovich.mdeditor.markdown.WikilinkResolver
-import com.shostakovich.mdeditor.tts.TtsChunkLocator
-import com.shostakovich.mdeditor.tts.TtsStartHint
-import io.noties.markwon.core.spans.HeadingSpan
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.LinkResolverDef
 import io.noties.markwon.Markwon
@@ -45,46 +38,6 @@ import io.noties.markwon.image.AsyncDrawableSpan
 import io.noties.markwon.image.ImagesPlugin
 import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin
 import io.noties.markwon.linkify.LinkifyPlugin
-
-// 選択メニュー「ここから読み上げ」の項目 ID と、コールバックへ渡すテキスト片の最大長
-private const val MENU_ID_READ_ALOUD = 0x7753  // 適当な固有値 (他メニューと被らなければ何でもいい)
-private const val READ_ALOUD_SNIPPET_LENGTH = 80
-
-/**
- * 選択位置 anchor の「直前の見出し」を Markwon の [HeadingSpan] から構造的に特定して
- * [TtsStartHint] を組み立てる。
- *
- * テキスト内容のあいまい一致 (snippet) はテーブル・数式の変換差異に弱いため、
- * 見出しという構造情報を第一手がかりにする。同一テキストの見出しが複数ある場合に
- * 備えて「同名見出しの何個目か」(occurrence) も数える。見出しが無ければ
- * heading=null となり、受け側はスニペット一致にフォールバックする。
- */
-private fun buildStartHint(displayed: CharSequence, anchor: Int, snippet: String): TtsStartHint {
-    val spanned = displayed as? Spanned
-        ?: return TtsStartHint(heading = null, headingOccurrence = 0, snippet = snippet)
-
-    val headings = spanned.getSpans(0, spanned.length, HeadingSpan::class.java)
-        .map { span -> spanned.getSpanStart(span) to spanned.getSpanEnd(span) }
-        .filter { (start, end) -> start in 0..<end }
-        .sortedBy { it.first }
-    val current = headings.lastOrNull { (start, _) -> start <= anchor }
-        ?: return TtsStartHint(heading = null, headingOccurrence = 0, snippet = snippet)
-
-    val headingText = spanned.subSequence(current.first, current.second).toString().trim()
-    if (headingText.isEmpty()) {
-        return TtsStartHint(heading = null, headingOccurrence = 0, snippet = snippet)
-    }
-    // 同一テキストの見出しのうち何個目か (0-based)。文書側 (チャンク) の出現順と対応する。
-    // 同一性判定は検索側 (TtsChunkLocator) と同じ headingKey で行う —
-    // 片側 trim・片側 condense だと「A B」と「AB」の区別がズレて誤ジャンプする
-    val targetKey = TtsChunkLocator.headingKey(headingText)
-    val occurrence = headings
-        .filter { (start, _) -> start < current.first }
-        .count { (start, end) ->
-            TtsChunkLocator.headingKey(spanned.subSequence(start, end).toString()) == targetKey
-        }
-    return TtsStartHint(heading = headingText, headingOccurrence = occurrence, snippet = snippet)
-}
 
 /**
  * Markdown をレンダリング表示する Composable。
@@ -115,8 +68,6 @@ private fun buildStartHint(displayed: CharSequence, anchor: Int, snippet: String
  * @param currentFolderPath ノートリンク同名複数候補時の優先元 (VaultIndex の folderPath)
  * @param onImageClick 画像タップ時のコールバック (fileId 引数)。null ならタップ無視
  * @param onNoteClick ノートリンクタップ時のコールバック (fileId 引数)。null なら通常リンクと同じ挙動
- * @param onReadAloudFrom テキスト選択メニュー「ここから読み上げ」のコールバック。
- *   直前見出し + 選択位置テキスト片の [TtsStartHint] を渡す。null ならメニュー項目を出さない
  * @param modifier Compose modifier
  */
 @Composable
@@ -126,7 +77,6 @@ fun MarkdownText(
     currentFolderPath: String? = null,
     onImageClick: ((fileId: String) -> Unit)? = null,
     onNoteClick: ((fileId: String) -> Unit)? = null,
-    onReadAloudFrom: ((hint: TtsStartHint) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -151,7 +101,6 @@ fun MarkdownText(
     // 最新参照を保持するため rememberUpdatedState で包む。
     val currentOnImageClick by rememberUpdatedState(onImageClick)
     val currentOnNoteClick by rememberUpdatedState(onNoteClick)
-    val currentOnReadAloudFrom by rememberUpdatedState(onReadAloudFrom)
 
     // 画面幅 (ピクセル)。padding を多少考慮して 32dp 程度引いておく。
     // density は context.resources.displayMetrics.density、px = dp * density。
@@ -264,50 +213,6 @@ fun MarkdownText(
                 // 代わりに setOnTouchListener で URLSpan / AsyncDrawableSpan を自前で
                 // 逆引きしてクリック処理する。
                 setTextIsSelectable(true)
-                // テキスト選択時のフローティングメニュー (コピー/共有等) に
-                // 「ここから読み上げ」を追加する。選択開始位置から最大80字の表示テキスト片を
-                // コールバックに渡し、呼び出し側 (EditorScreen) が TtsChunkLocator で
-                // 該当チャンクを特定して読み上げを開始する。
-                customSelectionActionModeCallback = object : ActionMode.Callback {
-                    override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean {
-                        if (currentOnReadAloudFrom != null) {
-                            menu?.add(0, MENU_ID_READ_ALOUD, 0, "ここから読み上げ")
-                        }
-                        return true
-                    }
-
-                    override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?): Boolean = false
-
-                    override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?): Boolean {
-                        if (item?.itemId != MENU_ID_READ_ALOUD) return false
-                        val handler = currentOnReadAloudFrom ?: return false
-                        val displayed = text ?: return false
-                        // 逆方向選択 (アンカーが後ろ) に備えて小さい方を取る。
-                        // 選択が取れない (-1) 場合は何もしない — 0 に丸めると
-                        // 「先頭80字が snippet になり必ず文書先頭から読まれる」誤動作になる。
-                        val selStart = selectionStart
-                        val selEnd = selectionEnd
-                        val anchor = minOf(selStart, selEnd)
-                        if (anchor < 0 || anchor >= displayed.length) {
-                            Log.w("MarkdownText", "readAloud: selection unavailable (start=$selStart end=$selEnd)")
-                            mode?.finish()
-                            return true
-                        }
-                        val end = (anchor + READ_ALOUD_SNIPPET_LENGTH).coerceAtMost(displayed.length)
-                        val snippet = displayed.subSequence(anchor, end).toString()
-                        val hint = buildStartHint(displayed, anchor, snippet)
-                        Log.d(
-                            "MarkdownText",
-                            "readAloud: anchor=$anchor heading=${hint.heading}#${hint.headingOccurrence} " +
-                                "snippet=${snippet.take(40)}",
-                        )
-                        handler(hint)
-                        mode?.finish()
-                        return true
-                    }
-
-                    override fun onDestroyActionMode(mode: ActionMode?) {}
-                }
                 setOnTouchListener { v, event ->
                     if (event.action != MotionEvent.ACTION_UP) return@setOnTouchListener false
                     val tv = v as? TextView ?: return@setOnTouchListener false

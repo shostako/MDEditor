@@ -45,6 +45,8 @@ class TtsService : Service() {
         private const val ACTION_START = "com.shostakovich.mdeditor.tts.START"
         private const val ACTION_PLAY_PAUSE = "com.shostakovich.mdeditor.tts.PLAY_PAUSE"
         private const val ACTION_STOP = "com.shostakovich.mdeditor.tts.STOP"
+        private const val ACTION_STEP_PREV = "com.shostakovich.mdeditor.tts.STEP_PREV"
+        private const val ACTION_STEP_NEXT = "com.shostakovich.mdeditor.tts.STEP_NEXT"
         private const val CHANNEL_ID = "tts_playback"
         private const val NOTIFICATION_ID = 1001
 
@@ -82,6 +84,8 @@ class TtsService : Service() {
                 override fun onPlay() = TtsManager.resume()
                 override fun onPause() = TtsManager.pause()
                 override fun onStop() = TtsManager.stop()
+                override fun onSkipToNext() = TtsManager.stepNext()
+                override fun onSkipToPrevious() = TtsManager.stepPrev()
             })
             isActive = true
         }
@@ -143,6 +147,8 @@ class TtsService : Service() {
                 is TtsManager.TtsState.Paused -> TtsManager.resume()
                 else -> Unit
             }
+            ACTION_STEP_PREV -> TtsManager.stepPrev()
+            ACTION_STEP_NEXT -> TtsManager.stepNext()
             ACTION_STOP -> TtsManager.stop()
         }
         return START_NOT_STICKY
@@ -189,6 +195,12 @@ class TtsService : Service() {
                 android.R.drawable.ic_media_play, "再開", servicePendingIntent(ACTION_PLAY_PAUSE, 1),
             )
         }
+        val prevAction = NotificationCompat.Action(
+            android.R.drawable.ic_media_previous, "前の見出し", servicePendingIntent(ACTION_STEP_PREV, 3),
+        )
+        val nextAction = NotificationCompat.Action(
+            android.R.drawable.ic_media_next, "次の見出し", servicePendingIntent(ACTION_STEP_NEXT, 4),
+        )
         val stopAction = NotificationCompat.Action(
             android.R.drawable.ic_menu_close_clear_cancel, "停止", servicePendingIntent(ACTION_STOP, 2),
         )
@@ -205,12 +217,16 @@ class TtsService : Service() {
             .setOngoing(playing)
             .setOnlyAlertOnce(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            // 順序 = [前の見出し, 再生/一時停止, 次の見出し, 停止]。
+            // compactView は最初の3つ（⏮ ⏯ ⏭）を出し、停止は展開時のみ
+            .addAction(prevAction)
             .addAction(playPauseAction)
+            .addAction(nextAction)
             .addAction(stopAction)
             .setStyle(
                 androidx.media.app.NotificationCompat.MediaStyle()
                     .setMediaSession(mediaSession.sessionToken)
-                    .setShowActionsInCompactView(0, 1),
+                    .setShowActionsInCompactView(0, 1, 2),
             )
             .build()
     }
@@ -239,7 +255,9 @@ class TtsService : Service() {
                     PlaybackStateCompat.ACTION_PLAY or
                         PlaybackStateCompat.ACTION_PAUSE or
                         PlaybackStateCompat.ACTION_PLAY_PAUSE or
-                        PlaybackStateCompat.ACTION_STOP,
+                        PlaybackStateCompat.ACTION_STOP or
+                        PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
+                        PlaybackStateCompat.ACTION_SKIP_TO_NEXT,
                 )
                 .setState(
                     if (playing) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED,

@@ -66,7 +66,9 @@ object TtsManager {
     private var pendingOnReady: (() -> Unit)? = null
 
     // ---- 再生位置（currentChunk は onStart=バインダースレッドからも書かれる） ----
-    private var chunks: List<String> = emptyList()
+    // content はチャンク列 + 見出しチャンク index を併せ持つ。chunks は後者を見ない既存処理向けの別名
+    private var content: TtsContent = TtsContent.EMPTY
+    private val chunks: List<String> get() = content.chunks
 
     @Volatile
     private var currentChunk = 0  // 0-based
@@ -104,31 +106,21 @@ object TtsManager {
     }
 
     /**
-     * 読み上げ開始。別ノート再生中なら止めて切り替える。
-     * @param startHint 開始位置の手がかり（直前見出し + 選択テキスト片）。
-     *   [TtsChunkLocator] で該当チャンクを探し、そこから読む。null/不一致なら先頭から
+     * 読み上げ開始（常に先頭から）。別ノート再生中なら止めて切り替える。
+     * 開始後のセクション移動は [stepNext]/[stepPrev] で行う。
      * @return 読み上げを開始した（= TtsService を起動すべき）なら true
      */
-    fun play(body: String, fileId: String, fileName: String?, startHint: TtsStartHint? = null): Boolean {
+    fun play(body: String, fileId: String, fileName: String?): Boolean {
         stopInternal()
-        val text = TtsTextNormalizer.normalize(body)
-        val newChunks = TtsChunker.chunk(text)
-        if (newChunks.isEmpty()) return false
+        val newContent = TtsContentBuilder.build(body)
+        if (newContent.chunks.isEmpty()) return false
 
-        chunks = newChunks
-        val startIndex = startHint?.let { TtsChunkLocator.findStartChunk(newChunks, it) } ?: 0
-        if (startHint != null) {
-            android.util.Log.d(
-                "TtsManager",
-                "locate: heading=${startHint.heading}#${startHint.headingOccurrence} " +
-                    "snippet=${startHint.snippet.take(30)} -> chunk $startIndex/${newChunks.size}",
-            )
-        }
-        currentChunk = startIndex
+        content = newContent
+        currentChunk = 0
         this.fileId = fileId
         this.fileName = fileName
         _state.value = TtsState.Preparing(fileId)
-        ensureEngine { enqueueFrom(startIndex) }
+        ensureEngine { enqueueFrom(0) }
         return true
     }
 
@@ -146,6 +138,26 @@ object TtsManager {
     fun resume() {
         if (_state.value !is TtsState.Paused) return
         ensureEngine { enqueueFrom(currentChunk) }
+    }
+
+    /** 次の見出し（セクション頭）へジャンプして再生。次が無ければ無反応 */
+    fun stepNext() {
+        val st = _state.value
+        if (st !is TtsState.Playing && st !is TtsState.Paused) return
+        val target = content.nextHeading(currentChunk) ?: return
+        jumpTo(target)
+    }
+
+    /**
+     * 前の見出し（セクション頭）へジャンプして再生。
+     * セクション途中なら現セクション頭、既に頭なら前セクション頭（メディアプレイヤー標準）。
+     * 戻り先が無ければ無反応。
+     */
+    fun stepPrev() {
+        val st = _state.value
+        if (st !is TtsState.Playing && st !is TtsState.Paused) return
+        val target = content.prevHeading(currentChunk) ?: return
+        jumpTo(target)
     }
 
     /** 完全停止。状態は Idle に戻り、TtsService はこれを観測して自殺する */
@@ -188,6 +200,18 @@ object TtsManager {
         pendingOnReady = null
         tts?.stop()
         abandonAudioFocus()
+    }
+
+    /**
+     * 指定チャンクへ移動して即再生する（Playing/Paused から呼ばれる）。
+     * pause/setSpeed と同じ「generation++ → stop → 再 enqueue」パターン。
+     * Paused から呼んでも再生を開始する（ステップ＝聞きたい位置への移動なので再生再開が自然）。
+     */
+    private fun jumpTo(index: Int) {
+        generation++
+        tts?.stop()
+        currentChunk = index
+        ensureEngine { enqueueFrom(index) }
     }
 
     /** エンジンが使える状態になったら onReady を呼ぶ（既に ready なら即時） */
