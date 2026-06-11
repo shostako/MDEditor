@@ -1,6 +1,7 @@
 package com.shostakovich.mdeditor.ui.markdown
 
 import android.text.Spannable
+import android.text.Spanned
 import android.text.style.ClickableSpan
 import android.text.util.Linkify
 import android.util.Log
@@ -24,6 +25,7 @@ import com.shostakovich.mdeditor.data.vault.VaultIndex
 import com.shostakovich.mdeditor.markdown.DriveSchemeHandler
 import com.shostakovich.mdeditor.markdown.MathNormalizer
 import com.shostakovich.mdeditor.markdown.WikilinkResolver
+import io.noties.markwon.core.spans.HeadingSpan
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.LinkResolverDef
 import io.noties.markwon.Markwon
@@ -38,6 +40,15 @@ import io.noties.markwon.image.AsyncDrawableSpan
 import io.noties.markwon.image.ImagesPlugin
 import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin
 import io.noties.markwon.linkify.LinkifyPlugin
+
+/**
+ * Markdown 内の見出し1つ分。アウトライン (目次ジャンプ) 用。
+ * @param text 見出しテキスト (記号を剥がした表示文字列)
+ * @param level 見出しレベル (1〜6)。アウトラインのインデントに使う
+ * @param yPx レンダリング済み TextView 内での見出し上端の Y 座標 (px)。
+ *   TextView の Compose 上の配置 Y と足すとスクロール目標 px になる
+ */
+data class MarkdownHeading(val text: String, val level: Int, val yPx: Int)
 
 /**
  * Markdown をレンダリング表示する Composable。
@@ -68,6 +79,7 @@ import io.noties.markwon.linkify.LinkifyPlugin
  * @param currentFolderPath ノートリンク同名複数候補時の優先元 (VaultIndex の folderPath)
  * @param onImageClick 画像タップ時のコールバック (fileId 引数)。null ならタップ無視
  * @param onNoteClick ノートリンクタップ時のコールバック (fileId 引数)。null なら通常リンクと同じ挙動
+ * @param onHeadingsChanged レンダリング後に抽出した見出しリストを渡す (アウトライン表示用)。null なら抽出しない
  * @param modifier Compose modifier
  */
 @Composable
@@ -77,6 +89,7 @@ fun MarkdownText(
     currentFolderPath: String? = null,
     onImageClick: ((fileId: String) -> Unit)? = null,
     onNoteClick: ((fileId: String) -> Unit)? = null,
+    onHeadingsChanged: ((List<MarkdownHeading>) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -101,6 +114,7 @@ fun MarkdownText(
     // 最新参照を保持するため rememberUpdatedState で包む。
     val currentOnImageClick by rememberUpdatedState(onImageClick)
     val currentOnNoteClick by rememberUpdatedState(onNoteClick)
+    val currentOnHeadingsChanged by rememberUpdatedState(onHeadingsChanged)
 
     // 画面幅 (ピクセル)。padding を多少考慮して 32dp 程度引いておく。
     // density は context.resources.displayMetrics.density、px = dp * density。
@@ -201,6 +215,9 @@ fun MarkdownText(
             .build()
     }
 
+    // アウトライン用: 同じ見出しリストで毎回 callback して無限再コンポーズするのを防ぐ
+    val lastHeadings = remember { mutableStateOf<List<MarkdownHeading>>(emptyList()) }
+
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
@@ -270,6 +287,38 @@ fun MarkdownText(
             textView.setTextColor(textColorArgb)
             textView.setLinkTextColor(linkColorArgb)
             markwon.setMarkdown(textView, processedMarkdown)
+
+            // アウトライン用の見出し抽出。layout が確定してからでないと Y 座標が取れないので
+            // post で measure/layout 後のキューに載せる。HeadingSpan の開始オフセットから
+            // 行 → 行上端 Y を引く。表示テキストとの照合は不要 (span が構造を保持している)。
+            val headingsCb = currentOnHeadingsChanged
+            if (headingsCb != null) {
+                textView.post {
+                    val spanned = textView.text as? Spanned ?: return@post
+                    val layout = textView.layout ?: return@post
+                    val headings = spanned
+                        .getSpans(0, spanned.length, HeadingSpan::class.java)
+                        .sortedBy { spanned.getSpanStart(it) }
+                        .mapNotNull { span ->
+                            val start = spanned.getSpanStart(span)
+                            val end = spanned.getSpanEnd(span)
+                            if (start < 0 || end <= start) return@mapNotNull null
+                            val headingText = spanned.subSequence(start, end).toString().trim()
+                            if (headingText.isEmpty()) return@mapNotNull null
+                            val line = layout.getLineForOffset(start)
+                            val y = layout.getLineTop(line) + textView.totalPaddingTop
+                            // HeadingSpan.getLevel() はバージョン差があるのでリフレクションで安全に取る
+                            val level = runCatching {
+                                HeadingSpan::class.java.getMethod("getLevel").invoke(span) as Int
+                            }.getOrDefault(1)
+                            MarkdownHeading(headingText, level, y)
+                        }
+                    if (headings != lastHeadings.value) {
+                        lastHeadings.value = headings
+                        headingsCb(headings)
+                    }
+                }
+            }
         }
     )
 }

@@ -5,8 +5,10 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,18 +19,23 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -41,6 +48,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -53,6 +63,7 @@ import com.shostakovich.mdeditor.data.vault.VaultRepository
 import com.shostakovich.mdeditor.markdown.Frontmatter
 import com.shostakovich.mdeditor.tts.TtsManager
 import com.shostakovich.mdeditor.tts.TtsService
+import com.shostakovich.mdeditor.ui.markdown.MarkdownHeading
 import com.shostakovich.mdeditor.ui.markdown.MarkdownText
 import com.shostakovich.mdeditor.ui.theme.MDEditorTheme
 import kotlinx.coroutines.async
@@ -74,6 +85,7 @@ import kotlinx.coroutines.launch
  *  - 戻るボタンは dirty なら確認 Dialog を出す (保存忘れ防止)
  *  - mode の状態は remember で十分 (画面回転で消えるが、M8+ の ViewModel 化で対応)
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(
     fileId: String,
@@ -130,6 +142,13 @@ fun EditorScreen(
     var ttsSpeed by remember { mutableStateOf(UiPrefsStorage.loadTtsSpeed()) }
     val context = LocalContext.current
 
+    // アウトライン (見出しジャンプ)。previewScrollState は Preview 本文のスクロール状態、
+    // markdownTopY は本文 TextView の Column 内 Y 位置 (px)。見出しの yPx と足してスクロールする。
+    val previewScrollState = rememberScrollState()
+    var headings by remember { mutableStateOf<List<MarkdownHeading>>(emptyList()) }
+    var markdownTopY by remember { mutableStateOf(0) }
+    var showOutline by remember { mutableStateOf(false) }
+
     // 読み上げ開始。play が true (= チャンクあり) の時だけ Foreground Service を起動する。
     // テキストは Intent に載せず TtsManager 経由で渡す (binder サイズ上限の回避)。常に先頭から
     // 始め、セクション移動は TtsBar の ⏮⏭ (TtsManager.stepPrev/stepNext) で行う。
@@ -181,6 +200,7 @@ fun EditorScreen(
         body = ""
         editingBody = ""
         editingFrontmatter = ""
+        headings = emptyList()
         saveState = SaveState.Idle
         try {
             coroutineScope {
@@ -291,8 +311,8 @@ fun EditorScreen(
             // プロパティ表示トグル。frontmatter があるファイルでのみ表示。
             // Preview / Edit どちらのモードでも切替可能 (パネル自体は Preview で描画)。
             if (frontmatter != null) {
-                ModeButton(
-                    text = "📋",
+                CompactToggleButton(
+                    label = "📋",
                     selected = showFrontmatter,
                     onClick = {
                         showFrontmatter = !showFrontmatter
@@ -301,10 +321,18 @@ fun EditorScreen(
                 )
             }
             Spacer(Modifier.weight(1f))
+            // アウトライン: Preview かつ見出しがあるときだけ。タップでボトムシートを開く
+            if (mode == EditorMode.Preview && headings.isNotEmpty()) {
+                CompactToggleButton(
+                    label = "📑",
+                    selected = showOutline,
+                    onClick = { showOutline = true }
+                )
+            }
             // TTS 読み上げ。再生中はこのファイルの一時停止/再開トグルとして振る舞う。
             if (!isLoading && errorMessage == null) {
-                ModeButton(
-                    text = "🔊",
+                CompactToggleButton(
+                    label = "🔊",
                     selected = isTtsThisFile,
                     onClick = { onTtsButtonClick() }
                 )
@@ -421,11 +449,10 @@ fun EditorScreen(
                 )
             }
             mode == EditorMode.Preview -> {
-                val scrollState = rememberScrollState()
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .verticalScroll(scrollState)
+                        .verticalScroll(previewScrollState)
                         .padding(vertical = 8.dp)
                 ) {
                     // プロパティパネル: トグル ON かつ frontmatter があれば本文の上に表示
@@ -438,14 +465,19 @@ fun EditorScreen(
                                 .padding(bottom = 12.dp)
                         )
                     }
-                    // Preview は保存済み body を表示 (編集中バッファは表示しない)
+                    // Preview は保存済み body を表示 (編集中バッファは表示しない)。
+                    // onHeadingsChanged でアウトライン用の見出しを受け取り、
+                    // onGloballyPositioned で本文 TextView の Column 内 Y を記録する。
                     MarkdownText(
                         markdown = body,
                         parentFolderId = parentFolderId,
                         currentFolderPath = currentFolderPath,
                         onImageClick = { fid -> viewerFileId = fid },
                         onNoteClick = onNoteClick,
-                        modifier = Modifier.fillMaxWidth()
+                        onHeadingsChanged = { headings = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onGloballyPositioned { markdownTopY = it.positionInParent().y.toInt() }
                     )
                 }
             }
@@ -486,6 +518,25 @@ fun EditorScreen(
             fileId = fid,
             onDismiss = { viewerFileId = null }
         )
+    }
+
+    // アウトライン (見出しジャンプ) のボトムシート。項目タップで本文をその見出しまでスクロール。
+    if (showOutline) {
+        val sheetState = rememberModalBottomSheetState()
+        ModalBottomSheet(
+            onDismissRequest = { showOutline = false },
+            sheetState = sheetState,
+        ) {
+            OutlinePanel(
+                headings = headings,
+                onSelect = { h ->
+                    scope.launch {
+                        previewScrollState.animateScrollTo(markdownTopY + h.yPx)
+                        showOutline = false
+                    }
+                },
+            )
+        }
     }
 
     // M7: 未保存変更があるまま戻ろうとした時の確認 Dialog
@@ -604,15 +655,38 @@ private fun ModeButton(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    // デフォルトの contentPadding (横24dp) は広く、ボタンが増えると 🔊 が画面外に出る。
+    // 横を詰めて全ボタンを1行に収める。
+    val padding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
     if (selected) {
-        Button(onClick = onClick, colors = ButtonDefaults.buttonColors()) {
+        Button(onClick = onClick, contentPadding = padding, colors = ButtonDefaults.buttonColors()) {
             Text(text)
         }
     } else {
-        OutlinedButton(onClick = onClick) {
+        OutlinedButton(onClick = onClick, contentPadding = padding) {
             Text(text)
         }
     }
+}
+
+/**
+ * モードバー右側の補助ボタン (📋 📑 🔊) 用のコンパクトなトグル。
+ * Preview/Edit の OutlinedButton/Button は最小幅が広く、3つ並べると 🔊 が画面外に
+ * 押し出される。横幅を詰めた clickable Text にし、selected で塗りつぶして状態を示す。
+ */
+@Composable
+private fun CompactToggleButton(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.bodyLarge,
+        color = if (selected) MaterialTheme.colorScheme.onPrimary
+        else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .clip(MaterialTheme.shapes.small)
+            .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    )
 }
 
 /**
@@ -675,6 +749,47 @@ private fun TtsControlButton(label: String, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 6.dp),
     )
+}
+
+/**
+ * アウトライン (見出し目次)。ボトムシートに表示し、タップで本文をその見出しまでスクロールする。
+ * 見出しレベルでインデントして階層を示す。
+ */
+@Composable
+private fun OutlinePanel(
+    headings: List<MarkdownHeading>,
+    onSelect: (MarkdownHeading) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(bottom = 24.dp),
+    ) {
+        item {
+            Text(
+                text = "見出し",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
+        items(headings) { h ->
+            Text(
+                text = h.text,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onSelect(h) }
+                    .padding(
+                        start = (16 + (h.level - 1).coerceIn(0, 5) * 16).dp,
+                        end = 16.dp,
+                        top = 10.dp,
+                        bottom = 10.dp,
+                    ),
+            )
+        }
+    }
 }
 
 @Preview(showBackground = true)
