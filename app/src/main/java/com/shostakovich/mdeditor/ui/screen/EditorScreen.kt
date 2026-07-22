@@ -56,6 +56,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.shostakovich.mdeditor.data.drive.DRIVE_FILE_DISPLAY_ORDER
+import com.shostakovich.mdeditor.data.drive.DriveFile
 import com.shostakovich.mdeditor.data.prefs.UiPrefsStorage
 import com.shostakovich.mdeditor.data.vault.FileContentCache
 import com.shostakovich.mdeditor.data.vault.VaultIndex
@@ -92,6 +94,7 @@ fun EditorScreen(
     onBack: () -> Unit,
     onNoteClick: ((fileId: String) -> Unit)? = null,
     onUpClick: ((folderId: String) -> Unit)? = null,
+    onNavigateSibling: ((fileId: String) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     var isLoading by remember { mutableStateOf(true) }
@@ -127,8 +130,12 @@ fun EditorScreen(
     var viewerFileId by remember { mutableStateOf<String?>(null) }
     // M7: 保存処理の状態
     var saveState by remember { mutableStateOf<SaveState>(SaveState.Idle) }
-    // M7: dirty 状態で戻ろうとした時の確認 Dialog 表示フラグ
+    // M7: dirty 状態で画面を離れようとした時の確認 Dialog 表示フラグ
     var showDiscardDialog by remember { mutableStateOf(false) }
+    // 破棄確認の後に実行する離脱アクション (戻る / 兄弟ノートへ移動 を共通化する)
+    var pendingExit by remember { mutableStateOf<(() -> Unit)?>(null) }
+    // 兄弟ノート送り: 同じフォルダの md だけを一覧と同じ並びで持つ
+    var siblings by remember { mutableStateOf<List<DriveFile>>(emptyList()) }
 
     // TTS 読み上げ状態。TtsManager はプロセスシングルトンなので、画面離脱・回転・
     // 復帰しても collectAsState の購読だけで状態が自動復元される。
@@ -251,13 +258,44 @@ fun EditorScreen(
         }
     }
 
-    // 戻る処理。dirty なら確認 Dialog、それ以外は普通に戻る。
-    fun handleBack() {
+    // 兄弟ノート (同フォルダの md) を一覧と同じ並びで取得する。parentFolderId が変わった時だけ
+    // 取り直す (同じフォルダ内のノート送りでは再取得不要、currentSiblingIndex だけが動く)。
+    LaunchedEffect(parentFolderId) {
+        val folder = parentFolderId
+        siblings = if (folder == null) {
+            emptyList()
+        } else {
+            try {
+                VaultRepository.listChildren(folder)
+                    .sortedWith(DRIVE_FILE_DISPLAY_ORDER)
+                    .filter { it.isMarkdown }
+            } catch (_: Throwable) {
+                emptyList()
+            }
+        }
+    }
+    // 兄弟リスト中での現在ノートの位置 (-1 = リストに無い/未取得)。前後ボタンの活性判定に使う
+    val currentSiblingIndex = siblings.indexOfFirst { it.id == fileId }
+
+    // 離脱 (戻る / 兄弟移動) の共通処理。dirty なら確認 Dialog を挟み、clean なら即実行。
+    fun requestExit(action: () -> Unit) {
         if (isDirty) {
+            pendingExit = action
             showDiscardDialog = true
         } else {
-            onBack()
+            action()
         }
+    }
+
+    fun handleBack() = requestExit(onBack)
+
+    // 兄弟ノートへ移動。index は循環させる (先頭の前 → 末尾、末尾の次 → 先頭)。
+    // 日付順フォルダで「最古を開いたが最新が見たい」ときに ‹ 一発で末尾へワープできる。
+    fun navigateSibling(index: Int) {
+        if (siblings.isEmpty()) return
+        val wrapped = (index % siblings.size + siblings.size) % siblings.size
+        val target = siblings[wrapped]
+        requestExit { onNavigateSibling?.invoke(target.id) }
     }
 
     Column(
@@ -289,6 +327,27 @@ fun EditorScreen(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
+            // 兄弟ノート送り: 同フォルダに md が複数あり、現在ノートがその中にある時だけ表示。
+            // 先頭/末尾は循環する (先頭で ‹ → 末尾へ、末尾で › → 先頭へワープ) のでボタンは常時有効。
+            if (siblings.size > 1 && currentSiblingIndex >= 0) {
+                TextButton(
+                    onClick = { navigateSibling(currentSiblingIndex - 1) },
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                ) {
+                    Text("‹", style = MaterialTheme.typography.titleLarge)
+                }
+                Text(
+                    text = "${currentSiblingIndex + 1}/${siblings.size}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(
+                    onClick = { navigateSibling(currentSiblingIndex + 1) },
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                ) {
+                    Text("›", style = MaterialTheme.typography.titleLarge)
+                }
+            }
         }
         // モード切替 + 保存ボタン
         Row(
@@ -539,30 +598,34 @@ fun EditorScreen(
         }
     }
 
-    // M7: 未保存変更があるまま戻ろうとした時の確認 Dialog
+    // M7: 未保存変更があるまま離脱 (戻る / 兄弟ノート移動) しようとした時の確認 Dialog
     if (showDiscardDialog) {
         AlertDialog(
-            onDismissRequest = { showDiscardDialog = false },
+            onDismissRequest = { showDiscardDialog = false; pendingExit = null },
             title = { Text("未保存の変更があります") },
-            text = { Text("変更を破棄して戻るか、保存して戻るか選んでくれ。") },
+            text = { Text("変更を破棄するか、保存してから移動するか選んでくれ。") },
             confirmButton = {
                 Button(onClick = {
                     showDiscardDialog = false
-                    doSave(onAfter = onBack)
+                    val action = pendingExit
+                    pendingExit = null
+                    doSave(onAfter = { action?.invoke() })
                 }) {
-                    Text("保存して戻る")
+                    Text("保存して移動")
                 }
             },
             dismissButton = {
                 Row {
                     OutlinedButton(onClick = {
                         showDiscardDialog = false
-                        onBack()
+                        val action = pendingExit
+                        pendingExit = null
+                        action?.invoke()
                     }) {
-                        Text("破棄して戻る")
+                        Text("破棄して移動")
                     }
                     Spacer(Modifier.width(8.dp))
-                    TextButton(onClick = { showDiscardDialog = false }) {
+                    TextButton(onClick = { showDiscardDialog = false; pendingExit = null }) {
                         Text("キャンセル")
                     }
                 }

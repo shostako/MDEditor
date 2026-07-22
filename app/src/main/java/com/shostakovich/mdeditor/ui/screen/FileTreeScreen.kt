@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.shostakovich.mdeditor.data.drive.DRIVE_FILE_DISPLAY_ORDER
 import com.shostakovich.mdeditor.data.drive.DriveFile
 import com.shostakovich.mdeditor.data.vault.VaultRepository
 import com.shostakovich.mdeditor.data.vault.VaultRootStorage
@@ -78,17 +79,9 @@ fun FileTreeScreen(
         scope.launch {
             try {
                 val raw = VaultRepository.listChildren(folderId)
-                // 並び替え: フォルダ → md → 画像 → その他 の順、各カテゴリ内は名前昇順
-                items = raw.sortedWith(
-                    compareBy<DriveFile> {
-                        when {
-                            it.isFolder -> 0
-                            it.isMarkdown -> 1
-                            it.isImage -> 2
-                            else -> 3
-                        }
-                    }.thenBy { it.name.lowercase() }
-                )
+                // 並び替え: フォルダ → md → 画像 → その他 の順、各カテゴリ内は名前昇順。
+                // 兄弟ノート送り (EditorScreen) と同じ並びを使うため共有比較子に集約している。
+                items = raw.sortedWith(DRIVE_FILE_DISPLAY_ORDER)
             } catch (e: Throwable) {
                 errorMessage = "読み込み失敗: ${e.message ?: e::class.simpleName}"
             } finally {

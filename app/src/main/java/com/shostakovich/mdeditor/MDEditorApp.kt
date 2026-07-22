@@ -122,6 +122,14 @@ fun MDEditorApp() {
                     onUpClick = { folderId ->
                         navController.navigate(Routes.fileTree(folderId))
                     },
+                    // 同じフォルダの前/次ノートへ。現在の editor を pop して新 editor を push する
+                    // = 置換なので、連続で送ってもバックスタックは積まれない (戻る一発で一覧へ)。
+                    // Wikilink で積んだ下層 editor は残るので、戻るとそのノートへ帰れる。
+                    onNavigateSibling = { sibId ->
+                        navController.navigate(Routes.editor(sibId)) {
+                            popUpTo(Routes.EDITOR_PATTERN) { inclusive = true }
+                        }
+                    },
                 )
             }
         }
