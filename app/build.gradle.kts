@@ -49,8 +49,8 @@ android {
         applicationId = "com.shostakovich.mdeditor"
         minSdk = 26
         targetSdk = 36
-        versionCode = 16
-        versionName = "1.11"
+        versionCode = 17
+        versionName = "1.12"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -157,6 +157,10 @@ dependencies {
     implementation(libs.androidx.media)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // JVM 単体テストで AuthState.jsonSerializeString() (org.json 使用) を実動させる。
+    // android.jar の org.json はスタブ (isReturnDefaultValues でも null を返すだけ) なので、
+    // 実装入りの本家 org.json をテスト classpath に足す (android.jar より先に解決される)。
+    testImplementation(libs.org.json)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)

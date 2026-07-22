@@ -57,14 +57,22 @@ object AuthManager {
         if (_authService == null) {
             synchronized(this) {
                 if (_authService == null) {
-                    TokenStorage.init(context)
-                    _authService = AuthorizationService(context.applicationContext)
-                    // 永続化されている AuthState を復元 (起動時に1回)。
-                    // ここで復元しておくと isAuthorized() がすぐ true を返せる。
-                    TokenStorage.load()?.let { restored ->
-                        authState = restored
-                        Log.d(TAG, "AuthState restored (isAuthorized=${restored.isAuthorized})")
+                    // v1.12: TokenStorage.init / load は内部で例外を堰き止める設計だが、
+                    // 起動経路 (MainActivity.onCreate) を何があっても殺さないよう
+                    // ここでも二重に防御する。失敗したら未認証で開始するだけ。
+                    try {
+                        TokenStorage.init(context)
+                        // 永続化されている AuthState を復元 (起動時に1回)。
+                        // ここで復元しておくと isAuthorized() がすぐ true を返せる。
+                        TokenStorage.load()?.let { restored ->
+                            authState = restored
+                            Log.d(TAG, "AuthState restored (isAuthorized=${restored.isAuthorized})")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Auth state restore failed, starting unauthenticated", e)
+                        authState = AuthState()
                     }
+                    _authService = AuthorizationService(context.applicationContext)
                     Log.d(TAG, "AuthorizationService initialized")
                 }
             }

@@ -22,6 +22,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.shostakovich.mdeditor.auth.AuthManager
+import com.shostakovich.mdeditor.auth.TokenStorage
 import com.shostakovich.mdeditor.ui.theme.MDEditorTheme
 
 /**
@@ -76,6 +77,35 @@ fun LoginScreen(
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center
         )
+        // v1.12: 暗号化認証ストレージの復旧告知。
+        // 端末修理・OS更新等で Keystore と暗号データが不整合になった場合、
+        // TokenStorage が認証情報だけをリセットして起動を継続する (クラッシュ回避)。
+        // その事実をユーザーに日本語で伝える。Drive 上のデータは無事である旨も明記。
+        when (TokenStorage.initResult) {
+            TokenStorage.InitResult.Recovered -> {
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    text = "端末のセキュリティ状態が変わったため、" +
+                        "保存されていたログイン情報をリセットしました。\n" +
+                        "お手数ですが再度ログインしてください。\n" +
+                        "(Drive 上のノートや画像は無事です)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+            TokenStorage.InitResult.Degraded -> {
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    text = "ログイン情報の暗号化保存が現在利用できません。\n" +
+                        "ログインは可能ですが、次回起動時に再ログインが必要になる場合があります。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center
+                )
+            }
+            TokenStorage.InitResult.Ok -> Unit
+        }
         Spacer(Modifier.height(32.dp))
         Button(onClick = {
             // AppAuth の Authorization Intent を取得して launcher で起動。

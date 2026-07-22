@@ -53,8 +53,12 @@ fun MDEditorApp() {
             composable(Routes.LOGIN) {
                 LoginScreen(
                     onLoginSuccess = {
-                        // ログイン完了後は LOGIN をスタックから除去して VAULT へ
-                        navController.navigate(Routes.VAULT) {
+                        // ログイン完了後は LOGIN をスタックから除去して次画面へ。
+                        // v1.12: 認証リセット復旧後の再ログインでは Vault 選択 (別ストレージ) が
+                        // 生き残っているので、VAULT を飛ばして直接ファイル一覧へ行く。
+                        val vaultId = VaultRootStorage.loadVaultId()
+                        val next = if (vaultId != null) Routes.fileTree(vaultId) else Routes.VAULT
+                        navController.navigate(next) {
                             popUpTo(Routes.LOGIN) { inclusive = true }
                         }
                     }
