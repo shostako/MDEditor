@@ -7,6 +7,9 @@
 /.idea/workspace.xml
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
+# IDE の環境状態 (接続デバイス・デプロイ先選択) — 共有物ではない
+/.idea/deviceManager.xml
+/.idea/deploymentTargetSelector.xml
 .DS_Store
 /build
 /captures
