@@ -338,6 +338,95 @@ class VaultIndexLogicTest {
     }
 
     @Test
+    fun `computeFolderPath - file under dot folder returns null`() = runTest {
+        // Obsidian のゴミ箱 (.trash) 配下。Vault 内ではあるがインデックス対象外。
+        val file = driveMd("trashed", "消したノート.md", parents = listOf("trash"))
+        val metadata = mapOf(
+            "trash" to DriveFile(
+                id = "trash", name = ".trash",
+                mimeType = DriveFile.MIME_FOLDER, parents = listOf(VAULT_ID),
+            ),
+        )
+        val path = VaultIndex.computeFolderPath(
+            file = file,
+            vaultRootId = VAULT_ID,
+            vaultRootName = VAULT_NAME,
+            existingMap = emptyMap(),
+            getMetadata = { id -> metadata[id] ?: error("unknown id: $id") },
+        )
+        assertNull(path)
+    }
+
+    @Test
+    fun `computeFolderPath - dot folder deeper in the chain returns null`() = runTest {
+        // 祖先のどこか 1階層でもドット始まりなら対象外。
+        val file = driveMd("deep", "x.md", parents = listOf("sub"))
+        val metadata = mapOf(
+            "sub" to DriveFile(
+                id = "sub", name = "普通のフォルダ",
+                mimeType = DriveFile.MIME_FOLDER, parents = listOf("dot"),
+            ),
+            "dot" to DriveFile(
+                id = "dot", name = ".trash",
+                mimeType = DriveFile.MIME_FOLDER, parents = listOf(VAULT_ID),
+            ),
+        )
+        val path = VaultIndex.computeFolderPath(
+            file = file,
+            vaultRootId = VAULT_ID,
+            vaultRootName = VAULT_NAME,
+            existingMap = emptyMap(),
+            getMetadata = { id -> metadata[id] ?: error("unknown id: $id") },
+        )
+        assertNull(path)
+    }
+
+    @Test
+    fun `computeFolderPath - dot named file returns null`() = runTest {
+        val file = driveMd("hidden", ".draft.md", parents = listOf(VAULT_ID))
+        val path = VaultIndex.computeFolderPath(
+            file = file,
+            vaultRootId = VAULT_ID,
+            vaultRootName = VAULT_NAME,
+            existingMap = emptyMap(),
+            getMetadata = { error("should not be called") },
+        )
+        assertNull(path)
+    }
+
+    @Test
+    fun `computeFolderPath - existing entry under dot folder returns null`() = runTest {
+        // 旧バージョンのインデックスに入ってしまった .trash 配下のノート。
+        // 既存エントリは親を辿り直さないので、保存済みパスから弾く必要がある。
+        val existing = mapOf("f1" to mdEntity("f1", "x.md", "BrainDump > .trash"))
+        val file = driveMd("f1", "x.md", parents = listOf("anywhere"))
+        val path = VaultIndex.computeFolderPath(
+            file = file,
+            vaultRootId = VAULT_ID,
+            vaultRootName = VAULT_NAME,
+            existingMap = existing,
+            getMetadata = { error("should not be called for existing") },
+        )
+        assertNull(path)
+    }
+
+    @Test
+    fun `computeFolderPath - dot named vault root does not exclude everything`() = runTest {
+        // Vault 自体がドット始まりの名前でも、その配下は対象のまま。
+        // folderPath の先頭要素 (= Vault 名) を判定から外していることの確認。
+        val existing = mapOf("f1" to mdEntity("f1", "x.md", ".MyVault > sub"))
+        val file = driveMd("f1", "x.md", parents = listOf("anywhere"))
+        val path = VaultIndex.computeFolderPath(
+            file = file,
+            vaultRootId = VAULT_ID,
+            vaultRootName = ".MyVault",
+            existingMap = existing,
+            getMetadata = { error("should not be called for existing") },
+        )
+        assertEquals(".MyVault > sub", path)
+    }
+
+    @Test
     fun `computeFolderPath - new file outside vault returns null`() = runTest {
         val file = driveMd("new", "x.md", parents = listOf("outside"))
         val metadata = mapOf(

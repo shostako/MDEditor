@@ -18,4 +18,27 @@ package com.shostakovich.mdeditor.data.drive
  * 設定の「すべてのファイルを表示」を ON にすると、この判定は無視して全件出す。
  */
 val DriveFile.isHiddenByDefault: Boolean
-    get() = name.startsWith(".") || !(isFolder || isMarkdown || isImage)
+    get() = isDotEntry || !(isFolder || isMarkdown || isImage)
+
+/**
+ * ドット始まりのファイル / フォルダ (`.obsidian/`, `.trash/`, `.draft.md` 等)。
+ *
+ * 一覧の非表示判定と、検索インデックスの走査除外の**両方**がこれを使う。
+ * 片方だけに入れると「一覧には出ないのに検索には出る」という食い違いになり、
+ * 削除済みノートを現役ノートと同じ見た目で開いて編集できてしまう。
+ */
+val DriveFile.isDotEntry: Boolean
+    get() = name.startsWith(".")
+
+/**
+ * `folderPath` ("Vault > 親A > 親B" 形式) がドット始まりのフォルダを含むか。
+ *
+ * 差分同期では、既に DB にあるファイルは保存済みの folderPath をそのまま使って
+ * 親を辿り直さない。そのため DriveFile 単体では `.trash` 配下だと判定できず、
+ * 保存済みのパス文字列から判定する必要がある。
+ *
+ * 先頭要素は Vault root 名なので判定から外す。Vault 自体がドット始まりの名前だと
+ * 全ノートが除外されてしまうため。
+ */
+fun String.hasDotFolderSegment(): Boolean =
+    split(" > ").drop(1).any { it.startsWith(".") }
