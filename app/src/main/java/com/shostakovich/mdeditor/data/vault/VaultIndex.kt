@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.shostakovich.mdeditor.data.drive.DriveChange
 import com.shostakovich.mdeditor.data.drive.DriveFile
+import com.shostakovich.mdeditor.data.drive.hasDotFolderSegment
+import com.shostakovich.mdeditor.data.drive.isDotEntry
 import com.shostakovich.mdeditor.data.index.IndexDatabaseProvider
 import com.shostakovich.mdeditor.data.index.MarkdownFileEntity
 import com.shostakovich.mdeditor.data.index.PageTokenStorage
@@ -321,7 +323,15 @@ object VaultIndex {
         existingMap: Map<String, MarkdownFileEntity>,
         getMetadata: suspend (String) -> DriveFile,
     ): String? {
-        existingMap[file.id]?.let { return it.folderPath }
+        // ファイル名自体がドット始まりなら対象外 (一覧の判定と揃える)。
+        if (file.isDotEntry) return null
+
+        existingMap[file.id]?.let {
+            // 既存エントリは親を辿り直さないので、保存済みパスから判定する。
+            // 過去のインデックスに入った `.trash` 配下のノートが、更新のたびに
+            // 上書き保存されて居座り続けるのを止める。
+            return if (it.folderPath.hasDotFolderSegment()) null else it.folderPath
+        }
 
         val parents = file.parents
         if (parents.isEmpty()) return null
@@ -338,6 +348,9 @@ object VaultIndex {
                 Log.w(TAG, "computeFolderPath: getMetadata($currentId) failed", e)
                 return null
             }
+            // 祖先にドット始まりのフォルダがあれば Vault 配下でも対象外。
+            // 親を辿る過程で名前は既に手元にあるので、追加の API 呼び出しは要らない。
+            if (parentMeta.isDotEntry) return null
             pathParts += parentMeta.name
             val nextParents = parentMeta.parents
             if (nextParents.isEmpty()) return null
@@ -434,6 +447,10 @@ object VaultIndex {
     ) {
         val children = VaultRepository.listChildren(folderId)
         for (child in children) {
+            // ドット始まりは潜らない / 拾わない。`.trash/` を拾うと、削除済みノートが
+            // 一覧には出ないのに検索にだけ現役ノートと同じ見た目で出てきて、
+            // そのまま開いて編集・保存までできてしまう。
+            if (child.isDotEntry) continue
             when {
                 child.isFolder -> {
                     val childPath = "$folderPath > ${child.name}"
