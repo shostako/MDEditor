@@ -36,10 +36,16 @@ data class DriveFile(
         get() = mimeType == MIME_FOLDER
 
     val isMarkdown: Boolean
-        get() = mimeType == "text/markdown" ||
-            mimeType == "text/x-markdown" ||
-            // Drive は .md を text/plain として保存することがある
-            (mimeType == "text/plain" && name.endsWith(".md", ignoreCase = true))
+        get() = !isFolder && (
+            mimeType == "text/markdown" ||
+                mimeType == "text/x-markdown" ||
+                // Drive が付ける mimeType はアップロード経路によって揺れる。
+                // text/plain のことも application/octet-stream のこともあるので、
+                // 拡張子が .md ならそれを信じる。一覧の表示/非表示がこの判定に
+                // 依存するようになった以上、漏れると「ノートが消える」に化ける。
+                // フォルダ名が "notes.md" のケースを拾わないよう !isFolder を前置している。
+                name.endsWith(".md", ignoreCase = true)
+            )
 
     val isImage: Boolean
         get() = mimeType.startsWith("image/")

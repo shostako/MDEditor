@@ -18,6 +18,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,16 +36,18 @@ import androidx.compose.ui.unit.dp
 import com.shostakovich.mdeditor.BuildConfig
 import com.shostakovich.mdeditor.auth.AuthManager
 import com.shostakovich.mdeditor.data.index.PageTokenStorage
+import com.shostakovich.mdeditor.data.prefs.UiPrefsStorage
 import com.shostakovich.mdeditor.data.vault.VaultIndex
 import com.shostakovich.mdeditor.data.vault.VaultRootStorage
 import com.shostakovich.mdeditor.ui.theme.MDEditorTheme
 import kotlinx.coroutines.launch
 
 /**
- * 設定画面 (M11)。3 項目:
+ * 設定画面 (M11)。4 項目:
  *  1. バージョン情報 (BuildConfig)
- *  2. Vault 再インデックス (VaultIndex.forceResync)
- *  3. ログアウト (AlertDialog 確認 → 全 storage クリア → LoginScreen)
+ *  2. ファイル一覧の表示フィルタ (UiPrefsStorage.showAllFiles)
+ *  3. Vault 再インデックス (VaultIndex.forceResync)
+ *  4. ログアウト (AlertDialog 確認 → 全 storage クリア → LoginScreen)
  *
  * 導線: FileTreeScreen ヘッダの ⚙ ボタンから。
  */
@@ -56,6 +59,7 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val indexState by VaultIndex.state.collectAsState()
     var showLogoutConfirm by remember { mutableStateOf(false) }
+    val showAllFiles by UiPrefsStorage.showAllFiles.collectAsState()
 
     Column(
         modifier = Modifier
@@ -81,6 +85,31 @@ fun SettingsScreen(
             Text(
                 text = "${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
                 style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        HorizontalDivider()
+
+        // -- 表示 --
+        SectionHeader("表示")
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp, horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("すべてのファイルを表示", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = "OFF: フォルダ・ノート(.md)・画像 だけを一覧に出す\n" +
+                        "ON: 開けないファイルや .obsidian なども含めて全件出す",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
+            }
+            Switch(
+                checked = showAllFiles,
+                onCheckedChange = { UiPrefsStorage.saveShowAllFiles(it) },
             )
         }
         HorizontalDivider()
