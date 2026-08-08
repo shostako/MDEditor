@@ -30,6 +30,34 @@ import com.shostakovich.mdeditor.data.vault.VaultRepository
 import androidx.compose.foundation.Image
 
 /**
+ * ビューア用のデコード。
+ *
+ * ピンチズームで拡大するので基本は原寸のままデコードするが、上限だけ設ける。
+ * 12MP のカメラ写真 (4000x3000) を原寸デコードすると ARGB_8888 で約 48MB を
+ * 一括確保することになり、低メモリ端末では OutOfMemoryError になる。
+ * 通常の Vault 画像 (スクショ・図) は上限に届かないので原寸のまま = 従来どおり。
+ *
+ * デコードできない形式では null が返る。呼び出し側で必ず判定すること。
+ */
+private fun decodeForViewer(bytes: ByteArray): android.graphics.Bitmap? {
+    // 1パス目: 寸法だけ取る
+    val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, boundsOpts)
+    val longestSide = maxOf(boundsOpts.outWidth, boundsOpts.outHeight)
+
+    // 2パス目: 上限を超える分だけ 2 のべき乗で間引く
+    var sampleSize = 1
+    while (longestSide > 0 && longestSide / sampleSize > MAX_VIEWER_DIMENSION_PX) {
+        sampleSize *= 2
+    }
+    val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpts)
+}
+
+/** ビューアでデコードする画像の最長辺の上限 (px)。 */
+private const val MAX_VIEWER_DIMENSION_PX = 4096
+
+/**
  * 画像のフルスクリーン拡大表示用 Dialog。
  *
  * 動作:
@@ -38,6 +66,9 @@ import androidx.compose.foundation.Image
  *  - フルスクリーンに収まるよう ContentScale.Fit で表示
  *  - ピンチで拡大縮小、ドラッグで移動 (基本的なズーム機能)
  *  - 画像以外の領域 or ダブルタップで閉じる
+ *
+ * 導線は 2つ: EditorScreen の `![[画像.png]]` タップと、FileTreeScreen の一覧タップ。
+ * 後者は Markwon の描画を経由しないので、デコード可否の判定をここで自前で持つ必要がある。
  *
  * Dialog は usePlatformDefaultWidth = false にしてフルスクリーンに広げる。
  */
@@ -63,8 +94,11 @@ fun ImageViewerDialog(
                 ?: VaultRepository.downloadBinaryFile(fileId).also {
                     ImageCache.put(fileId, it)
                 }
-            // フル解像度でデコード (ダウンサンプリングしない、ピンチズームで拡大できるように)
-            bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            // decodeByteArray は非対応フォーマット (svg 等) に対して例外ではなく null を返す。
+            // 描画側は bitmap == null を「読み込み中」として扱うので、null のまま置くと
+            // スピナーが永久に回る。ここで明示的にエラーへ落とす。
+            bitmap = decodeForViewer(bytes)
+                ?: throw IllegalStateException("この形式の画像は表示できない")
         } catch (e: Throwable) {
             errorMessage = "画像読み込み失敗: ${e.message ?: e::class.simpleName}"
         }
