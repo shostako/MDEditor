@@ -77,7 +77,7 @@ fun SearchScreen(
             val rootName = VaultRootStorage.loadVaultName()
             if (rootId != null && rootName != null) {
                 scope.launch {
-                    VaultIndex.start(context, rootId, rootName, scope)
+                    VaultIndex.start(context, rootId, rootName)
                 }
             }
         }
@@ -168,9 +168,7 @@ fun SearchScreen(
                             val rootId = VaultRootStorage.loadVaultId()
                             val rootName = VaultRootStorage.loadVaultName()
                             if (rootId != null && rootName != null) {
-                                scope.launch {
-                                    VaultIndex.forceResync(rootId, rootName, scope)
-                                }
+                                VaultIndex.forceResync(rootId, rootName)
                             }
                         }) {
                             Text("再同期", style = MaterialTheme.typography.bodySmall)
@@ -191,7 +189,7 @@ fun SearchScreen(
                             val rootName = VaultRootStorage.loadVaultName()
                             if (rootId != null && rootName != null) {
                                 scope.launch {
-                                    VaultIndex.start(context, rootId, rootName, scope)
+                                    VaultIndex.start(context, rootId, rootName)
                                 }
                             }
                         },

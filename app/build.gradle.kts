@@ -49,8 +49,8 @@ android {
         applicationId = "com.shostakovich.mdeditor"
         minSdk = 26
         targetSdk = 36
-        versionCode = 18
-        versionName = "1.13"
+        versionCode = 19
+        versionName = "1.14"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

@@ -10,6 +10,8 @@ import com.shostakovich.mdeditor.data.index.IndexDatabaseProvider
 import com.shostakovich.mdeditor.data.index.MarkdownFileEntity
 import com.shostakovich.mdeditor.data.index.PageTokenStorage
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,6 +61,21 @@ object VaultIndex {
     private val _state = MutableStateFlow<IndexState>(IndexState.NotBuilt)
     val state: StateFlow<IndexState> = _state.asStateFlow()
 
+    /**
+     * 走査・同期を回す専用スコープ。
+     *
+     * 以前は呼び出し側のスコープ (画面の rememberCoroutineScope や Activity の
+     * lifecycleScope) をそのまま使っていたが、それだと**画面を離れたり Activity が
+     * 再生成された瞬間に走査が黙って中断**される。syncFull は走査が全部終わってから
+     * まとめて DB に書くので、途中で切られると何も書かれず、エラーも出ないまま
+     * 「再インデックスしたのに何も変わらない」になる。
+     *
+     * インデックス構築は UI の寿命と無関係に完走すべき処理なので、専用スコープを
+     * プロセススコープで持つ。Dispatchers.IO なのは、走査中の集合演算やリスト構築が
+     * メインスレッドを踏まないようにするため。
+     */
+    private val indexScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     /** 同時に build/sync が走らないようにする mutex */
     private val mutex = Mutex()
 
@@ -78,7 +95,6 @@ object VaultIndex {
         context: Context,
         vaultRootId: String,
         vaultRootName: String,
-        backgroundScope: CoroutineScope,
     ) {
         mutex.withLock {
             IndexDatabaseProvider.init(context)
@@ -88,9 +104,13 @@ object VaultIndex {
                 val files = existing.map { it.toIndexed() }
                 _state.value = IndexState.Built(files, isSyncing = true)
                 Log.d(TAG, "start: loaded ${files.size} from DB, kicking sync")
-                // 同期はバックグラウンドで
-                backgroundScope.launch {
-                    sync(vaultRootId, vaultRootName)
+                // 同期はバックグラウンドで。indexScope なので Activity 再生成では切れない。
+                indexScope.launch {
+                    try {
+                        sync(vaultRootId, vaultRootName)
+                    } finally {
+                        clearSyncingFlag()
+                    }
                 }
             } else {
                 Log.d(TAG, "start: DB empty, building from scratch")
@@ -411,21 +431,35 @@ object VaultIndex {
      * **必ず全件走査する** (pageToken を捨てて新規取得)。差分同期だと取りこぼした
      * フォルダリネーム等が直らないため、ユーザが明示的に押した時は全件で直す。
      */
-    suspend fun forceResync(
+    fun forceResync(
         vaultRootId: String,
         vaultRootName: String,
-        backgroundScope: CoroutineScope,
     ) {
         val current = _state.value
         if (current is IndexState.Built) {
             _state.value = current.copy(isSyncing = true)
         }
-        backgroundScope.launch {
-            mutex.withLock {
-                // pageToken を捨ててから全件 sync。syncFull の最後で新 token が再採取される。
-                PageTokenStorage.clear()
-                syncFull(vaultRootId, vaultRootName)
+        indexScope.launch {
+            try {
+                mutex.withLock {
+                    // pageToken を捨ててから全件 sync。syncFull の最後で新 token が再採取される。
+                    PageTokenStorage.clear()
+                    syncFull(vaultRootId, vaultRootName)
+                }
+            } finally {
+                // 何があっても isSyncing を落とす。ここが無いと中断時に true のまま
+                // 固着し、設定画面のボタンがスピナーのまま戻らなくなる (プロセス
+                // シングルトンなのでアプリを殺すまで消えない)。
+                clearSyncingFlag()
             }
+        }
+    }
+
+    /** Built かつ isSyncing なら false に落とす。完了・失敗・中断の共通後始末。 */
+    private fun clearSyncingFlag() {
+        val s = _state.value
+        if (s is IndexState.Built && s.isSyncing) {
+            _state.value = s.copy(isSyncing = false)
         }
     }
 
