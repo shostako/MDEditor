@@ -754,8 +754,9 @@ private fun CompactToggleButton(label: String, selected: Boolean, onClick: () ->
 
 /**
  * TTS 読み上げの操作バー。読み上げ中/一時停止中に本文の上へ表示される。
- * ⏮⏭ (前/次の見出しセクションへ移動)、⏸/▶ (一時停止・再開)、⏹ (停止)、
- * 速度サイクル (0.75→1.0→1.25→1.5→2.0x)、進捗。
+ * 並びは ⏮ ⏸/▶ ⏹ ⏭ 速度 + 進捗。再生/一時停止と停止を隣接させ、
+ * その外側にセクション送り (⏮⏭ = 前/次の見出しへ移動) を置く。
+ * 速度はタップでサイクル (0.75→1.0→1.25→1.5→2.0x)。
  * ⏮⏭ は見出しのないノートでは無反応 (TtsManager 側で弾く)。
  */
 @Composable
@@ -784,8 +785,8 @@ private fun TtsBar(
         ) {
             TtsControlButton("⏮", onStepPrev)
             TtsControlButton(if (playing) "⏸" else "▶", onPlayPause)
-            TtsControlButton("⏭", onStepNext)
             TtsControlButton("⏹", onStop)
+            TtsControlButton("⏭", onStepNext)
             TtsControlButton("${speed}x", onCycleSpeed)
             Spacer(Modifier.weight(1f))
             Text(
