@@ -153,9 +153,10 @@ fun SettingsScreen(
                         val vaultId = VaultRootStorage.loadVaultId()
                         val vaultName = VaultRootStorage.loadVaultName()
                         if (vaultId != null && vaultName != null) {
-                            scope.launch {
-                                VaultIndex.forceResync(vaultId, vaultName, scope)
-                            }
+                            // VaultIndex 側の専用スコープで走る。画面を離れても
+                            // 走査は完走する (以前はここの scope に縛られていて、
+                            // 戻った瞬間に黙って中断されていた)。
+                            VaultIndex.forceResync(vaultId, vaultName)
                         }
                     },
                 ) { Text("再インデックス") }

@@ -8,11 +8,14 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import com.shostakovich.mdeditor.auth.AuthManager
 import com.shostakovich.mdeditor.data.index.IndexDatabaseProvider
@@ -53,25 +56,31 @@ class MainActivity : ComponentActivity() {
             MDEditorTheme {
                 // M12: 起動 UX = システム SplashScreen (アイコン+背景色) →
                 //   Compose 擬似スプラッシュ (アイコン + "MDEditor" テキスト) 0.8秒 →
-                //   MDEditorApp 本体。間はクロスフェード。
-                var showSplash by remember { mutableStateOf(true) }
+                //   MDEditorApp 本体。スプラッシュは本体の**上に重ねて**フェードで消す。
+                //
+                // v1.14: 以前は 2つの AnimatedVisibility で本体とスプラッシュを
+                // 出し分けていたが、これだとスプラッシュ表示中は MDEditorApp が
+                // コンポジションから外れ、NavController が作り直されてバックスタックが
+                // 消える。ダークモードの時刻切替や放置による Activity 再生成のたびに
+                // 「戻るボタンが効かない」状態になっていた原因がこれ。
+                //
+                // showSplash が rememberSaveable なのも同じ理由。plain remember だと
+                // Activity 再生成のたびに演出が再生され、そのたびに本体が外れる。
+                var showSplash by rememberSaveable { mutableStateOf(true) }
                 LaunchedEffect(Unit) {
                     delay(SPLASH_DURATION_MS)
                     showSplash = false
                 }
-                AnimatedVisibility(
-                    visible = showSplash,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                ) {
-                    SplashContent()
-                }
-                AnimatedVisibility(
-                    visible = !showSplash,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // 本体は常にコンポーズしたままにする (NavController を生かす)
                     MDEditorApp()
+                    AnimatedVisibility(
+                        visible = showSplash,
+                        enter = fadeIn(),
+                        exit = fadeOut(),
+                    ) {
+                        SplashContent()
+                    }
                 }
             }
         }
@@ -96,7 +105,6 @@ class MainActivity : ComponentActivity() {
                 context = this@MainActivity,
                 vaultRootId = vaultId,
                 vaultRootName = vaultName,
-                backgroundScope = lifecycleScope,
             )
         }
     }
