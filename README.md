@@ -88,6 +88,10 @@ release ビルド（要 keystore 設定）:
 - Vault の画像添付は Obsidian の「ノートと同じフォルダに添付」モードを想定。Wikilink 画像の解決は同フォルダ内のみ
 - 更新インストール時は `versionCode` を上げること（同一だと Android が更新と認識しない）
 
+## 変更履歴
+
+バージョンごとの変更点は [CHANGELOG.md](CHANGELOG.md) を参照。
+
 ## ライセンス
 
 [MIT](LICENSE)
