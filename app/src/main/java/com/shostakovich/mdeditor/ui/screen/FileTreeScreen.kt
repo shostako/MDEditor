@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +35,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.shostakovich.mdeditor.data.drive.DRIVE_FILE_DISPLAY_ORDER
 import com.shostakovich.mdeditor.data.drive.DriveFile
+import com.shostakovich.mdeditor.data.drive.isHiddenByDefault
+import com.shostakovich.mdeditor.data.prefs.UiPrefsStorage
 import com.shostakovich.mdeditor.data.vault.VaultRepository
 import com.shostakovich.mdeditor.data.vault.VaultRootStorage
 import com.shostakovich.mdeditor.ui.theme.MDEditorTheme
@@ -52,6 +55,9 @@ import kotlinx.coroutines.launch
  *  2. その後 .md ファイル
  *  3. その後 画像
  *  4. その後 その他
+ *
+ * 表示対象: 既定ではフォルダ / .md / 画像 だけを出し、残りは件数だけ末尾に添える
+ * (判定は DriveFile.isHiddenByDefault)。設定の「すべてのファイルを表示」で全件表示に戻せる。
  */
 @Composable
 fun FileTreeScreen(
@@ -69,6 +75,12 @@ fun FileTreeScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     // 「📁↑」用: 親フォルダの fileId。Vault root or 取得失敗時は null (ボタン非表示)
     var parentFolderId by remember { mutableStateOf<String?>(null) }
+    // タップされた画像。非 null の間だけ ImageViewerDialog を出す。
+    var previewImageId by remember { mutableStateOf<String?>(null) }
+
+    // 設定の「すべてのファイルを表示」。SettingsScreen から戻った直後にも効くよう
+    // StateFlow で購読する (remember に閉じ込めると古い値のまま残る)。
+    val showAllFiles by UiPrefsStorage.showAllFiles.collectAsState()
 
     // folderId が変わったら再フェッチ。
     LaunchedEffect(folderId) {
@@ -103,6 +115,11 @@ fun FileTreeScreen(
         }
     }
 
+    // items は Drive から来た全件。表示用に絞り、隠した数は末尾に出す。
+    // 「フィルタで全部消えた → 空フォルダに見える」は壊れて見えるので、必ず件数を添える。
+    val visibleItems = if (showAllFiles) items else items.filter { !it.isHiddenByDefault }
+    val hiddenCount = items.size - visibleItems.size
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -126,7 +143,7 @@ fun FileTreeScreen(
             Spacer(Modifier.width(8.dp))
             if (!isLoading) {
                 Text(
-                    text = "${items.size} 件",
+                    text = "${visibleItems.size} 件",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.weight(1f)
                 )
@@ -168,46 +185,73 @@ fun FileTreeScreen(
         }
 
         // 一覧
-        if (items.isEmpty()) {
+        if (visibleItems.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "(空のフォルダ)",
+                    text = if (hiddenCount > 0) {
+                        // 「空」ではなく「絞った結果ゼロ」。ここを区別しないとバグに見える。
+                        "(表示できるファイルなし ・ 他 $hiddenCount 件は表示対象外)"
+                    } else {
+                        "(空のフォルダ)"
+                    },
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(items, key = { it.id }) { file ->
+                items(visibleItems, key = { it.id }) { file ->
                     FileRow(
                         file = file,
                         onClick = {
                             when {
                                 file.isFolder -> onFolderClick(file.id)
                                 file.isMarkdown -> onMarkdownClick(file.id)
-                                else -> Unit // 画像など、M3 段階では tap 無効
+                                file.isImage -> previewImageId = file.id
+                                else -> Unit // 表示対象外を「すべて表示」で出した場合
                             }
                         }
                     )
                     HorizontalDivider()
                 }
+                if (hiddenCount > 0) {
+                    item {
+                        Text(
+                            text = "他 $hiddenCount 件（表示対象外）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 14.dp)
+                        )
+                    }
+                }
             }
         }
+    }
+
+    previewImageId?.let { imageId ->
+        ImageViewerDialog(
+            fileId = imageId,
+            onDismiss = { previewImageId = null },
+        )
     }
 }
 
 /**
  * 1行 (フォルダ or ファイル) の描画。
  * 種別ごとに先頭アイコン (絵文字) と濃淡を変える。
+ *
+ * clickable にするのは「タップして何かが起きる」種別だけ。反応しない行を押せるように
+ * 見せない。既定では開けない種別自体が一覧に出ないが、「すべてのファイルを表示」を
+ * ON にすると出てくるので、その場合に効く。
  */
 @Composable
 private fun FileRow(
     file: DriveFile,
     onClick: () -> Unit,
 ) {
-    val isClickable = file.isFolder || file.isMarkdown
+    val isClickable = file.isFolder || file.isMarkdown || file.isImage
     val icon = when {
         file.isFolder -> "📁"
         file.isMarkdown -> "📝"
